@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "caravel")(type "KiCad")(uri "${KIPRJMOD}/caravel.kicad_sym")(options "")(descr ""))
+)
