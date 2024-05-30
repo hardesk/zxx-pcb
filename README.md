@@ -1,4 +1,8 @@
-# Pinout
+# Caravel with Z80 to DIP40 adapter PCB
+
+See: https://github.com/rejunity/z80-open-silicon
+
+## Pinout
 
                                    Z80 CPU
                    ,----------------.___.----------------.
@@ -28,4 +32,4 @@
 ## Power rails for Caravel
         GND     29 (Z80) --- vss*  56, 52, 38, 39, 29, 23, 20, 10, 1
         VCC_5V0 11 (Z80) --- vddio 64, 17
-           VCC_1V8 (LDO) --- vccd, vccd1, vccd2 63, 49, 18
+        VCC_1V8    (LDO) --- vccd, vccd1, vccd2 63, 49, 18
