@@ -9888,7 +9888,7 @@
 		)
 		(uuid "677cccdc-88ef-4576-b938-81b854e3e262")
 	)
-	(label "prj_io36"
+	(label "prj_io34"
 		(at 214.63 86.36 0)
 		(fields_autoplaced yes)
 		(effects
@@ -9965,7 +9965,7 @@
 		)
 		(uuid "783011db-2d05-4cf9-a3ac-2a1b78d8638e")
 	)
-	(label "prj_io30"
+	(label "prj_io32"
 		(at 214.63 68.58 0)
 		(fields_autoplaced yes)
 		(effects
@@ -10009,7 +10009,7 @@
 		)
 		(uuid "88d1f176-f501-405f-86c2-008b3c1d4263")
 	)
-	(label "prj_io35"
+	(label "prj_io36"
 		(at 214.63 104.14 0)
 		(fields_autoplaced yes)
 		(effects
@@ -10020,7 +10020,7 @@
 		)
 		(uuid "8c98bc25-afe7-4953-8a90-24ff7676cb1a")
 	)
-	(label "prj_io32"
+	(label "prj_io30"
 		(at 257.81 99.06 0)
 		(fields_autoplaced yes)
 		(effects
@@ -10064,7 +10064,7 @@
 		)
 		(uuid "96345a53-0849-4fe2-bf71-4813a7ccc2f9")
 	)
-	(label "prj_io34"
+	(label "prj_io35"
 		(at 214.63 101.6 0)
 		(fields_autoplaced yes)
 		(effects
