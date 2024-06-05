@@ -58,7 +58,13 @@
           "width": 0.0
         }
       ],
-      "drc_exclusions": [],
+      "drc_exclusions": [
+        "lib_footprint_mismatch|160920000|87200000|c5ba655f-7fe7-4330-887d-fb2338802a80|00000000-0000-0000-0000-000000000000",
+        "lib_footprint_mismatch|162190000|87200000|c9ccb83c-361e-4fe1-83e9-af9c3fbcdef8|00000000-0000-0000-0000-000000000000",
+        "lib_footprint_mismatch|163460000|87200000|1c40ff17-afbc-4be4-8091-eb518a0d6936|00000000-0000-0000-0000-000000000000",
+        "lib_footprint_mismatch|164730000|87200000|46b19527-fbbc-4c35-b8b5-ecb8e6f8b1d8|00000000-0000-0000-0000-000000000000",
+        "lib_footprint_mismatch|166000000|87200000|d2dd92d4-7e32-4021-b8df-019fbe173155|00000000-0000-0000-0000-000000000000"
+      ],
       "meta": {
         "version": 2
       },
