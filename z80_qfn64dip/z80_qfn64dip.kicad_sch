@@ -6373,6 +6373,12 @@
 		(uuid "c89219e0-957e-48d4-b778-64f0feeb4896")
 	)
 	(junction
+		(at 87.63 148.59)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "ce1d0430-a3dd-4eda-ac51-2ef6db2d02ee")
+	)
+	(junction
 		(at 78.74 148.59)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -6413,6 +6419,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "f54f9284-699f-463d-8c1e-c33efcfd24da")
+	)
+	(junction
+		(at 45.72 156.21)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "fc69a916-63cd-4d7a-8ca6-3ad3ba03aa2e")
 	)
 	(no_connect
 		(at 27.94 31.75)
@@ -7560,6 +7572,16 @@
 	)
 	(wire
 		(pts
+			(xy 45.72 163.83) (xy 54.61 163.83)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1f333f15-68ff-4d12-af9e-b4d765d39602")
+	)
+	(wire
+		(pts
 			(xy 80.01 27.94) (xy 86.36 27.94)
 		)
 		(stroke
@@ -7907,6 +7929,16 @@
 			(type default)
 		)
 		(uuid "39402896-d4c1-4cc8-9a7b-022f32bf31bc")
+	)
+	(wire
+		(pts
+			(xy 87.63 148.59) (xy 101.6 148.59)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "39fcba3d-39ab-4d22-99f3-3915438dbb0d")
 	)
 	(bus
 		(pts
@@ -8257,6 +8289,16 @@
 			(type default)
 		)
 		(uuid "53153422-563a-4c6b-be67-9d8f2b878ede")
+	)
+	(wire
+		(pts
+			(xy 101.6 163.83) (xy 101.6 148.59)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "532ff723-63a4-469a-b11a-d8f208b8dca8")
 	)
 	(wire
 		(pts
@@ -8928,6 +8970,16 @@
 		)
 		(uuid "811e9041-017c-40b0-a40d-029d22aa8e6d")
 	)
+	(wire
+		(pts
+			(xy 45.72 156.21) (xy 45.72 163.83)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "81d4e333-d1e9-4fb9-acda-b703f1ba76d8")
+	)
 	(bus
 		(pts
 			(xy 199.39 71.12) (xy 199.39 73.66)
@@ -9247,6 +9299,16 @@
 			(type default)
 		)
 		(uuid "9a91169b-bdf6-425b-9ee0-806e74826e14")
+	)
+	(wire
+		(pts
+			(xy 62.23 163.83) (xy 101.6 163.83)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9c07de18-6c75-4d79-a2e8-c11994e015c8")
 	)
 	(bus
 		(pts
@@ -10536,6 +10598,24 @@
 			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAABQAAAAgAAAAFAAAABwAAAAQAAAAC"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 			"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -14855,6 +14935,73 @@
 		)
 	)
 	(symbol
+		(lib_id "Device:R")
+		(at 58.42 163.83 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "4b8066c7-db8f-4c2c-9eea-0a3d597d4f76")
+		(property "Reference" "R4"
+			(at 56.642 161.29 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "0R"
+			(at 59.436 161.29 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0402_1005Metric_Pad0.72x0.64mm_HandSolder"
+			(at 58.42 165.608 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 58.42 163.83 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Resistor"
+			(at 58.42 163.83 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "90098cfb-add9-4cdd-b43b-385ec1bdaae1")
+		)
+		(pin "1"
+			(uuid "b5c98811-fcf9-4b0d-8680-49dcd2a4da4f")
+		)
+		(instances
+			(project "z80_qfn64dip"
+				(path "/e5031d68-0e90-4495-a422-07a5d18aeb00"
+					(reference "R4")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "tps7a2018:TPS7A2018PDQNRM3")
 		(at 46.99 180.34 0)
 		(unit 1)
@@ -16169,25 +16316,24 @@
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "76f0dbda-b57d-4876-8c8c-f756d741781e")
 		(property "Reference" "R3"
-			(at 59.69 229.87 90)
+			(at 58.166 232.664 90)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
 			)
 		)
-		(property "Value" "R0"
-			(at 59.69 232.41 90)
+		(property "Value" "0R"
+			(at 61.214 232.664 90)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
 			)
 		)
-		(property "Footprint" "Resistor_SMD:R_0603_1608Metric_Pad0.98x0.95mm_HandSolder"
+		(property "Footprint" "Resistor_SMD:R_0402_1005Metric_Pad0.72x0.64mm_HandSolder"
 			(at 59.69 237.998 90)
 			(effects
 				(font
