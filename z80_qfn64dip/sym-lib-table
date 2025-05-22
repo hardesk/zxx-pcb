@@ -1,4 +1,7 @@
 (sym_lib_table
   (version 7)
-  (lib (name "caravel")(type "KiCad")(uri "${KIPRJMOD}/caravel.kicad_sym")(options "")(descr ""))
+  (lib (name "caravel")(type "KiCad")(uri "${KIPRJMOD}/kicad_symbols/caravel.kicad_sym")(options "")(descr ""))
+  (lib (name "tps7a2018")(type "KiCad")(uri "${KIPRJMOD}/kicad_symbols/TPS7A2018PDQNRM3.kicad_sym")(options "")(descr ""))
+  (lib (name "tps7a2050")(type "KiCad")(uri "${KIPRJMOD}/kicad_symbols/TPS7A2050PDQNRM3.kicad_sym")(options "")(descr ""))
+  (lib (name "tps7a2033")(type "KiCad")(uri "${KIPRJMOD}/kicad_symbols/TPS7A2033PDQNRM3.kicad_sym")(options "")(descr ""))
 )
