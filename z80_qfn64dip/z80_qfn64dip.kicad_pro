@@ -60,31 +60,15 @@
       ],
       "drc_exclusions": [
         [
-          "clearance|165237502|81879453|f97db2ea-4c75-4d76-925f-414d546e220a|33da1910-36fd-44ac-8151-2f619bf74937",
-          ""
-        ],
-        [
-          "clearance|165237502|84325000|a6e36009-0039-4eda-b9bf-f66446f32c2e|b06c0201-25df-4172-aea9-ef7ca9491570",
-          ""
-        ],
-        [
           "clearance|165237502|87485000|f6583f3c-ee14-44e9-9878-d6b42fd387ab|a7c78ca2-634e-4f6c-9ad1-5a267e6537dd",
           ""
         ],
         [
-          "clearance|165847501|81669454|0597e6d8-7ed2-49c2-98fc-3562b8fef2df|33da1910-36fd-44ac-8151-2f619bf74937",
+          "clearance|165242502|81875000|a6e36009-0039-4eda-b9bf-f66446f32c2e|b06c0201-25df-4172-aea9-ef7ca9491570",
           ""
         ],
         [
-          "clearance|165847501|82439454|e43081a0-b20e-4e4d-a54a-08bf0cfaa90c|33da1910-36fd-44ac-8151-2f619bf74937",
-          ""
-        ],
-        [
-          "clearance|165847501|84115001|b4db3926-49b3-4efc-b5a0-add41432261b|b06c0201-25df-4172-aea9-ef7ca9491570",
-          ""
-        ],
-        [
-          "clearance|165847501|84885001|388b79c8-8d48-4963-a937-4e07e809fe4b|b06c0201-25df-4172-aea9-ef7ca9491570",
+          "clearance|165242502|84354999|f97db2ea-4c75-4d76-925f-414d546e220a|33da1910-36fd-44ac-8151-2f619bf74937",
           ""
         ],
         [
@@ -93,6 +77,22 @@
         ],
         [
           "clearance|165847501|88045001|a004d780-baed-4ec8-9ad9-b75ffe556326|a7c78ca2-634e-4f6c-9ad1-5a267e6537dd",
+          ""
+        ],
+        [
+          "clearance|165852501|81665001|b4db3926-49b3-4efc-b5a0-add41432261b|b06c0201-25df-4172-aea9-ef7ca9491570",
+          ""
+        ],
+        [
+          "clearance|165852501|82435001|388b79c8-8d48-4963-a937-4e07e809fe4b|b06c0201-25df-4172-aea9-ef7ca9491570",
+          ""
+        ],
+        [
+          "clearance|165852501|84145000|0597e6d8-7ed2-49c2-98fc-3562b8fef2df|33da1910-36fd-44ac-8151-2f619bf74937",
+          ""
+        ],
+        [
+          "clearance|165852501|84915000|e43081a0-b20e-4e4d-a54a-08bf0cfaa90c|33da1910-36fd-44ac-8151-2f619bf74937",
           ""
         ],
         [
@@ -685,21 +685,51 @@
         },
         {
           "group_by": false,
-          "label": "Datasheet",
-          "name": "Datasheet",
-          "show": true
-        },
-        {
-          "group_by": false,
           "label": "Footprint",
           "name": "Footprint",
           "show": true
         },
         {
           "group_by": false,
+          "label": "Datasheet",
+          "name": "Datasheet",
+          "show": true
+        },
+        {
+          "group_by": false,
+          "label": "Description",
+          "name": "Description",
+          "show": false
+        },
+        {
+          "group_by": false,
           "label": "Qty",
           "name": "${QUANTITY}",
           "show": true
+        },
+        {
+          "group_by": false,
+          "label": "#",
+          "name": "${ITEM_NUMBER}",
+          "show": false
+        },
+        {
+          "group_by": false,
+          "label": "JLC",
+          "name": "JLC",
+          "show": false
+        },
+        {
+          "group_by": false,
+          "label": "MPN",
+          "name": "MPN",
+          "show": false
+        },
+        {
+          "group_by": false,
+          "label": "Part number",
+          "name": "Part number",
+          "show": false
         },
         {
           "group_by": true,
@@ -711,7 +741,7 @@
       "filter_string": "",
       "group_symbols": true,
       "include_excluded_from_bom": false,
-      "name": "Grouped By Value",
+      "name": "",
       "sort_asc": true,
       "sort_field": "Reference"
     },
