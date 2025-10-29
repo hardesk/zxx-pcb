@@ -1,0 +1,27 @@
+[binaries]
+c           = 'arm-none-eabi-gcc'
+cpp         = 'arm-none-eabi-gcc'
+ar          = 'arm-none-eabi-gcc'
+strip       = 'arm-none-eabi-gcc'
+objcopy     = 'arm-none-eabi-gcc'
+objdump     = 'arm-none-eabi-gcc'
+# pkg_config_libdir =
+
+[host_machine]
+system = 'none'
+cpu_family = 'arm'
+cpu = 'cortex-m33'
+endian = 'little'
+
+[built-in options]
+# Cortex-M33 + single-precision FPU (hard), Thumb
+c_args   = ['-mcpu=cortex-m33','-mthumb','-mfpu=fpv5-sp-d16','-mfloat-abi=hard','-ffunction-sections','-fdata-sections']
+c_link_args = ['-Wl,--gc-sections']
+
+
+# ????
+# Meson won’t add libc unless you ask; pico-sdk links the right startup/linker via its CMake targets.
+# If you need to tweak optimization or debugging:
+# b_lto = true
+# optimization = 's'
+# debug = true
