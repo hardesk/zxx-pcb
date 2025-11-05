@@ -1,3 +1,0 @@
-# these may go into meson_options.txt
-option('platform', type: 'string', value: 'rp2350-arm-s', description: 'Pico SDK PICO_PLATFORM')
-option('board',    type: 'string', value: 'pico',         description: 'Pico SDK PICO_BOARD')

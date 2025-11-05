@@ -3,14 +3,14 @@
 TOOLCHAIN=/opt/riscv32i/bin/riscv32-unknown-elf
 CCOPT=-nostdlib -Os -Wno-builtin-declaration-mismatch -march=rv32imc_zicsr_zifencei 
 #CCOPT=-nostdlib -Os -Wno-builtin-declaration-mismatch -march=rv32i
-FWDIR=../caravel_board/firmware/mpw2-5
-#FWDIR=../caravel_board/firmware/chipignite
+#FWDIR=../caravel_board/firmware/mpw2-5
+FWDIR=../../../caravel_board/firmware/chipignite
 
 .PHONY: clean
 
-fw: z80_boot.c
-	$(TOOLCHAIN)-gcc $(CCOPT) -I$(FWDIR)/ -T$(FWDIR)/sections.lds $(FWDIR)/crt0_vex.S $(FWDIR)/isr.c z80_boot.c
-	$(TOOLCHAIN)-objcopy -O binary a.out fw
+z80fw: z80_boot.c
+	$(TOOLCHAIN)-gcc $(CCOPT) -I$(FWDIR)/ -T$(FWDIR)/sections.lds $(FWDIR)/crt0_vex.S $(FWDIR)/isr.c -o $@.elf $^
+	$(TOOLCHAIN)-objcopy -O binary $@.elf $@
 
 clean:
-	rm fw a.out
+	rm z80fw z80fw.elf
