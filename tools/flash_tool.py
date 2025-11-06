@@ -81,7 +81,7 @@ def flash_wait_ready(port, timeout=1.0):
         status = flash_status(port)
         if not (status & SR_WIP): return
         if time.time() - t0 > timeout:
-            raise TimeoutError("Flash WIP status did not clear withing timed out")
+            raise TimeoutError("Flash WIP status did not clear within time out")
         time.sleep(0.005)
 
 def flash_wren(port):
