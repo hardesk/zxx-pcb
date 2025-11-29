@@ -1,4 +1,4 @@
-.section .text.startup, "ax", @progbits
+.section .text.crt0, "ax", @progbits
 
 .global main
 .global isr
@@ -14,7 +14,7 @@ _start:
   nop
   nop
 
-.global  trap_entry
+.global trap_entry
 trap_entry:
   sw x1,  - 1*4(sp)
   sw x5,  - 2*4(sp)
@@ -52,8 +52,8 @@ trap_entry:
   lw x31,  0*4(sp)
   addi sp,sp,16*4
   mret
-  .text
 
+.text
 
 crt_init:
   la sp, _fstack

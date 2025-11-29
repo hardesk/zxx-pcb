@@ -23,6 +23,9 @@ SECTIONS
 	.text :
 	{
 		_ftext = .;
+
+		KEEP(*(.text.crt0*))
+
 		/* Make sure crt0 files come first, and they, and the isr */
 		/* don't get disposed of by greedy optimisation */
 		KEEP(*(.text.startup .text.startup.*))
