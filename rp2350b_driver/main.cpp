@@ -51,13 +51,15 @@ enum Pins {
 
 	pMREQ = 28,     // cpu out
     pIORQ = 29,     // cpu out
-	pWR = 30,       // cpu out
-	pRD = 31,       // cpu out
+	pRD = 30,       // cpu out
+	pWR = 31,       // cpu out
 
     pWAIT = 32,     // cpu in
     pNMI = 33,      // cpu in
     pBUSRQ = 34,    // cpu in
     pBUSACK = 35,   // cpu out
+
+    pM1 = 36,       // cpu out
 
     pPIN_COUNT
 };
@@ -66,10 +68,10 @@ enum Pins {
 #define IO_DATA 0x0000'00ffu
 #define IO_ADDR_SHIFT 8
 #define IO_ADDR 0x00ff'ff00u
-#define IO_CTRL 0xf'ff00'0000ull
+#define IO_CTRL 0x1f'ff00'0000ull
 #define IO_CTRL_SHIFT 24
 #define IO_CTRLL_WIDTH 8
-#define IO_CTRLH_WIDTH 4
+#define IO_CTRLH_WIDTH 5
 #define IO_ALL ((uint64_t)IO_DATA|(uint64_t)IO_ADDR|(uint64_t)IO_CTRL)
 
 inline uint32_t extract_ctrl(uint64_t ctrl_addr_data) {
@@ -88,7 +90,7 @@ struct ZxDbgPins
     uint8_t data;
     union {
         struct {
-            bool CLK:1, RESET:1, INT:1, HALT:1, MREQ:1, IORQ:1, WR:1, RD:1, WAIT:1, NMI:1, BUSREQ:1, BUSACK:1;
+            bool CLK:1, RESET:1, INT:1, HALT:1, MREQ:1, IORQ:1, RD:1, WR:1, WAIT:1, NMI:1, BUSREQ:1, BUSACK:1, M1:1;
         };
         uint16_t value;
     } pins;
@@ -106,9 +108,10 @@ struct ZxDbgPins
     }
 
     void dump_state(unsigned T) {
-        printf("T%4d %04x %02x clk %d rst %d int %d halt %d mreq %d iorq %d wr %d rd %d wait %d nmi %d busreq %d busack %d\n",
+        printf("T%4d %04x %02x clk %d rst %d mreq %d m1 %d iorq %d rd %d wr %d int %d halt %d wait %d nmi %d busreq %d busack %d\n",
             T, addr, data,
-            pins.CLK, pins.RESET, pins.INT, pins.HALT, pins.MREQ, pins.IORQ, pins.WR, pins.RD, pins.WAIT, pins.NMI, pins.BUSREQ, pins.BUSACK
+            pins.CLK, pins.RESET, pins.MREQ, pins.M1, pins.IORQ, pins.RD, pins.WR,
+            pins.INT, pins.HALT, pins.WAIT, pins.NMI, pins.BUSREQ, pins.BUSACK
         );
     }
 };
@@ -124,8 +127,8 @@ struct ZxEnv
     char* m_ram;
     size_t m_ram_size;
 
-    #define DAT(x) (addr_data&0xffu)
-    #define ADR(x) ((addr_data&0xffffu) >> 8u)
+    #define DAT(x) ((addr_data&IO_DATA)>>IO_DATA_SHIFT)
+    #define ADR(x) ((addr_data&IO_ADDR)>>IO_ADDR_SHIFT)
 
     #define IS_LO(pin,bits) ((bits & (1U<<(pin-IO_CTRL_SHIFT))) == 0)
     #define IS_HI(pin,bits) ((bits & (1U<<(pin-IO_CTRL_SHIFT))) != 0)
@@ -141,15 +144,24 @@ struct ZxEnv
         if (IS_LO(pMREQ, ctrl)) {
             // CPU WRITEs
             if (IS_LO(pWR, ctrl) && IS_HI(pWR, ctrlx)) {
-                if (ADR(addr_data) == 0) {
-                    self().impl_debug_trap(DAT(addr_data));
+                uint16_t addr = ADR(addr_data);
+                uint8_t dat = DAT(addr_data);
+                if (addr == 0) {
+                    self().impl_debug_trap(dat);
                 }
-                m_ram[ADR(addr_data)] = DAT(addr_data);
+                self().impl_on_memwrite(addr, dat);
+                m_ram[addr] = dat;
             } else
             // CPU READs
             if (IS_LO(pRD, ctrl) && IS_HI(pRD, ctrlx)) {
                 uint16_t addr = ADR(addr_data);
                 uint8_t dat = m_ram[addr];
+                self().impl_on_memread(addr, IS_LO(pM1, ctrl));
+                if (IS_LO(pM1, ctrl)) {
+                    // printf("\033[34mcode %04x %02x\033[0m\n", addr, dat);
+                    if (addr==0)
+                        printf("\033[31mSOFT RESET DETECTED\033[0m\n");
+                }
                 self().expose_data(dat);
             }
         } else
@@ -180,7 +192,7 @@ struct ZxEnv
 
     struct MemoryDumpOpts {
         short width = 16;
-        bool address:1 = true;
+        bool show_address:1 = true;
         bool ascii:1 = false;
     };
 
@@ -188,14 +200,16 @@ struct ZxEnv
         for (size_t i=0; i<size; ) {
             char const* pl = m_ram + addr + i;
             size_t mx = std::min(size-i, (size_t)opts.width);
-            if (opts.address)
+            if (opts.show_address)
                 printf("%08x  ", addr + i);
             for (size_t q=0; q<mx; ++q)
                 printf("%02x%s", pl[q], q == mx-1 ? "" : " ");
             printf("%*s", 1 + (opts.width-mx)*3, "");
-            if (opts.ascii)
+            if (opts.ascii) {
+                printf("%c", ' ');
                 for (size_t q=0; q<mx; ++q)
                     printf("%c", pl[q] >= 32 && pl[q] <= 127 ? pl[q] : '.' );
+            }
             printf("\n");
             i += mx;
         }
@@ -203,6 +217,9 @@ struct ZxEnv
 
 private:
     void impl_debug_trap(uint8_t trapno) {}
+
+    void impl_on_memread(uint16_t addr, bool m1) {}
+    void impl_on_memwrite(uint16_t addr, uint8_t dat) {}
 };
 
 struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
@@ -235,18 +252,31 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         gpio_set_function_masked64(IO_ALL, GPIO_FUNC_SIO);
         gpio_set_dir_all_bits64(pins_oe);
         gpio_put_all64(kInitOne);
+
+        // for(size_t i=0; i<409600; ++i) {
+        //     half_clk((i&1) == 0);
+        //     sleep_us(1);
+        // }
     }
 
     void expose_data(uint8_t dat) {
+        // gpio_set_dir_out_masked(IO_LOW_OUT | IO_DATA);
         gpio_set_dir_masked(IO_DATA, IO_DATA);
         gpio_put_masked(IO_DATA, dat << IO_DATA_SHIFT);
     }
 
     void clear_data_bus() {
+        // gpio_set_dir_out_masked(IO_LOW_OUT);
         gpio_set_dir_masked(IO_DATA, 0);
     }
 
-    void handle_io_out(uint16_t addr, uint8_t data) {}
+    void handle_io_out(uint16_t addr, uint8_t data) {
+        if (addr == 0xff81) {
+            printf("DATA on port %04x: %02x\n", addr, data);
+        } else if (addr == 0xff83) {
+            printf("%c", data);
+        }
+    }
     uint8_t handle_io_in(uint16_t addr) { return 0; }
 
     void half_clk(bool raise) {
@@ -255,7 +285,7 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
 
     void reset() {
         #if PIN_DEBUG
-        printf("ZxEnv: Resetting CPU.\n");
+        printf("ZxEnv: Resetting CPU\n");
         #endif
         gpio_put_masked64(kInitOne, kInitOne);
         gpio_put_masked(1u<<pRESET, 0u);
@@ -274,6 +304,15 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         dbg.dump_state(7);
         #endif
     }
+
+    void prepare_cpm() {
+        m_ram[0] = 0xc3;
+        m_ram[1] = 0x00;
+        m_ram[2] = 0x01;
+
+        m_ram[6] = 0;
+        m_ram[7] = 0;
+   }
 
     void prepare_trap(unsigned offset = 0) {
         auto prep = [](uint8_t*& code, auto... bytes) -> void {
@@ -313,6 +352,14 @@ private:
             }
         }
     }
+
+    void impl_on_memwrite(uint16_t addr, uint8_t dat) {
+        // if (addr >= 0x1d30 && addr <= 0x1db8) {
+        //     printf(">> writing %02x to %04x\n", dat, addr);
+        //     dump_memory(0x1d00, 256, { .width = 8, .show_address = true, .ascii = true } );
+        // }
+    }
+
 };
 
 inline static uint32_t gpio_get_all_hi() {
@@ -334,14 +381,25 @@ void blink_hello() {
     }
 }
 
+#ifdef DATA_ASM_FILE
+
+#if __has_include(DATA_ASM_FILE)
+#include DATA_ASM_FILE
+#define z80_prog DATA_ASM_LABEL
+#endif
+
+#else 
+
 // #if __has_include("zexdoc.h")
 // #include "zexdoc.h"
-// #define z80_prog zexdoc
+// #define z80_prog zexdoc_prog
 // #endif
 
 #if __has_include("test.h")
 #include "test.h"
 #define z80_prog test_prog
+#endif
+
 #endif
 
 // unsigned char copy_str_code[] = {
@@ -362,7 +420,9 @@ int main()
     zx.init();
     zx.reset();
 
-    zx.prepare_trap();
+    zx.prepare_cpm();
+
+    //zx.prepare_trap();
     //zx.load(copy_str_code, count_of(copy_str_code), 0x100);
     zx.load(z80_prog, count_of(z80_prog), 0x100);
     zx.dump_memory(0, 512, { .width = 16, .ascii = true } );
@@ -386,11 +446,11 @@ int main()
         return buf;
     };
 
-    printf("pins oe hi %08x lo %08x func-A0 %d outlevel-A0 %d\n", sio_hw->gpio_hi_oe, sio_hw->gpio_oe, gpio_get_function(pA0), gpio_get_out_level(pA0));
-    printf(" oe h %08x l %08x\n", sio_hw->gpio_hi_oe, sio_hw->gpio_oe);
-    for (int i=0; i<36; ++i){
-        printf(" - pin %2d func %d oe %d PAD [[ %s ]]\n", i, gpio_get_function(i), gpio_get_dir(i), fmt_pad(pads_bank0_hw->io[i]));
-    }
+    // printf("pins oe hi %08x lo %08x func-A0 %d outlevel-A0 %d\n", sio_hw->gpio_hi_oe, sio_hw->gpio_oe, gpio_get_function(pA0), gpio_get_out_level(pA0));
+    // printf(" oe h %08x l %08x\n", sio_hw->gpio_hi_oe, sio_hw->gpio_oe);
+    // for (int i=0; i<36; ++i){
+    //     printf(" - pin %2d func %d oe %d PAD [[ %s ]]\n", i, gpio_get_function(i), gpio_get_dir(i), fmt_pad(pads_bank0_hw->io[i]));
+    // }
 
     while (1) {
         zx.half_clk(clk_level==0);
@@ -407,14 +467,14 @@ int main()
         // printf("pins hilo %08x %08x\n", gpio_get_all_hi(), gpio_get_all());
 #endif 
 
-        ZxDbgPins dbg(addr_data_ctrl, ctrlhi);
-        // if (clk_level == 0)// && dbg.pins.RD == 0 && dbg.pins.MREQ == 0)
-            dbg.dump_state(tick);
+        //ZxDbgPins dbg(addr_data_ctrl, ctrlhi);
+        // if (clk_level == 0 && dbg.pins.MREQ == 0 && !(dbg.pins.RD==1 && dbg.pins.WR==1))
+        //     dbg.dump_state(tick);
 
         zx.react(ctrl_shifted, addr_data_ctrl & (IO_ADDR|IO_DATA));
 
         clk_level = 1u - clk_level;
-        if (clk_level == 0)
+        if (clk_level == 1)
             ++tick;
 
         // if ((tick & 0x0f'ffffull) == 0) {
@@ -422,5 +482,15 @@ int main()
         // } else if ((tick & 0x0f'ffffull) == 10000u) {
         //     gpio_put(LED_PIN, false);
         // }
+        if ((tick&0xffffff) == 0 && clk_level == 0) {
+            // printf("\033[36m<T %llu>\033[0m", tick);
+            char xx[] = "0123456789abcdef";
+            printf("\033[36m%c\033[0m", xx[(tick>>24)&0xf]);
+            //zx.dump_memory(0x1d00, 256, { .width = 8, .show_address = true, .ascii = true } );
+        }
+
+
+
+        //sleep_us(1);
     }
 }

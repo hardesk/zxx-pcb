@@ -19,17 +19,19 @@ project(rp2350_driver)
 # init the sdk
 pico_sdk_init()
 
-set(CMAKE_C_FLAGS_DEBUG "-O0 -g" CACHE STRING "" FORCE)
-set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g" CACHE STRING "" FORCE)
+set(CMAKE_C_FLAGS_DEBUG "-O3 -g" CACHE STRING "" FORCE)
+set(CMAKE_CXX_FLAGS_DEBUG "-O3 -g" CACHE STRING "" FORCE)
 
 # Paths for the data build
-#set(DATA_FILENAME_BASE zexdoc)
-set(DATA_FILENAME_BASE test)
-#set(DATA_ASM     $ENV{HOME}/Projects/speccy/zexall.git/zexdoc.asm)
-set(DATA_ASM     ${CMAKE_CURRENT_SOURCE_DIR}/test.asm)
-set(DATA_BIN     ${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILENAME_BASE}.bin)
-set(DATA_HEADER  ${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILENAME_BASE}.h)
-set(DATA_SYMBOL_NAME ${DATA_FILENAME_BASE}_prog)
+#set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/test.asm)
+#set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/prelim_test.asm)
+#set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/ram_test.asm)
+set(DATA_ASM     $ENV{HOME}/Projects/speccy/zexall.git/zexdoc.asm)
+cmake_path(GET DATA_ASM STEM DATA_FILENAME_STEM)
+set(DATA_BIN     ${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILENAME_STEM}.bin)
+set(DATA_LST     ${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILENAME_STEM}.lst)
+set(DATA_HEADER  ${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILENAME_STEM}.h)
+set(DATA_SYMBOL_NAME ${DATA_FILENAME_STEM}_prog)
 
 find_program(SJASMPLUS_EXECUTABLE
 	NAMES sjasmplus
@@ -38,7 +40,8 @@ find_program(SJASMPLUS_EXECUTABLE
 
 add_custom_command(
     OUTPUT ${DATA_BIN}
-    COMMAND ${SJASMPLUS_EXECUTABLE} --color=on ${DATA_ASM} --raw=${DATA_BIN}
+    # without the --syntax=a, ops like `and a, 3' are assembled into two operations, that is incorrectly
+    COMMAND ${SJASMPLUS_EXECUTABLE} --syntax=aF --color=on ${DATA_ASM} --raw=${DATA_BIN} --lst=${DATA_LST}
     DEPENDS ${DATA_ASM}
     COMMENT "Assembling ${DATA_ASM} -> ${DATA_BIN}"
     VERBATIM
@@ -60,7 +63,11 @@ add_executable(rp2350_driver
 	${DATA_HEADER}
 )
 
-target_compile_definitions(rp2350_driver PUBLIC SEGGER_RTT_MODE_DEFAULT=SEGGER_RTT_MODE_BLOCK_IF_FIFO_FULL)
+target_compile_definitions(rp2350_driver
+    PUBLIC SEGGER_RTT_MODE_DEFAULT=SEGGER_RTT_MODE_BLOCK_IF_FIFO_FULL
+    PUBLIC DATA_ASM_FILE="${DATA_FILENAME_STEM}.h"
+    PUBLIC DATA_ASM_LABEL=${DATA_FILENAME_STEM}_prog
+    )
 
 target_include_directories(rp2350_driver PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
