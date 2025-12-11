@@ -320,7 +320,8 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         };
         uint8_t* start = (uint8_t*)&m_ram[offset];
         uint8_t* p = start;
-        prep(p, 0xc3, 0x00, 0x01);                  // jp 0x100
+        //prep(p, 0xc3, 0x00, 0x01);                  // jp 0x100
+        prep(p, 0xc3, 0x00, 0x80);                  // jp 0x100
         prep(p, 0x00, 0x00, 0x00, 0x00, 0x00);
         assert(p - start == 8);
         prep(p, 0xed, 0x43, 0x80, 0x00);            // ld (0x0080), bc
@@ -424,7 +425,8 @@ int main()
 
     //zx.prepare_trap();
     //zx.load(copy_str_code, count_of(copy_str_code), 0x100);
-    zx.load(z80_prog, count_of(z80_prog), 0x100);
+    // zx.load(z80_prog, count_of(z80_prog), 0x100);
+    zx.load(z80_prog, count_of(z80_prog), 0x8000);
     zx.dump_memory(0, 512, { .width = 16, .ascii = true } );
 
     uint64_t tick = 0;
@@ -482,12 +484,14 @@ int main()
         // } else if ((tick & 0x0f'ffffull) == 10000u) {
         //     gpio_put(LED_PIN, false);
         // }
-        if ((tick&0xffffff) == 0 && clk_level == 0) {
+        #if 0
+        if ((tick&0x1ffffff) == 0 && clk_level == 0) {
             // printf("\033[36m<T %llu>\033[0m", tick);
             char xx[] = "0123456789abcdef";
-            printf("\033[36m%c\033[0m", xx[(tick>>24)&0xf]);
+            printf("\033[36m%c\033[0m", xx[(tick>>25)&0xf]);
             //zx.dump_memory(0x1d00, 256, { .width = 8, .show_address = true, .ascii = true } );
         }
+        #endif
 
 
 

@@ -1,0 +1,29 @@
+{
+    "files.associations": {
+        "cstddef": "cpp",
+        "cstdint": "cpp",
+        "pads_bank0.h": "c",
+        "sio.h": "c",
+        "address_mapped.h": "c",
+        "addressmap.h": "c",
+        "pico.h": "c",
+        "config.h": "c",
+        "gpio_coproc.h": "c",
+        "__locale": "c",
+        "gpio.h": "c",
+        "platform.h": "c",
+        "ios": "cpp"
+    },
+    "terminal.integrated.scrollback": 100000,
+    "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild",
+    "dotnet.defaultSolution": "disable",
+    "cortex-debug.gdbPath": "/Applications/ArmGNUToolchain/13.2.Rel1/arm-none-eabi/bin/arm-none-eabi-gdb",
+    "cortex-debug.openocdPath": "/opt/openocd-master/bin/openocd",
+    "cortex-debug.variableUseNaturalFormat": false,
+
+    "dezog.log.zsim.customCode": true,
+    "dezog.log.zsim.customCodeVerbosity": "minimal",
+    "dezog.log.zsim.hardware": false,
+    "dezog.log.global": false,
+    "dezon.log.zsim.writePort": false
+}

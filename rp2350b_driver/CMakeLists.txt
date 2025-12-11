@@ -26,10 +26,15 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O3 -g" CACHE STRING "" FORCE)
 #set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/test.asm)
 #set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/prelim_test.asm)
 #set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/ram_test.asm)
-set(DATA_ASM     $ENV{HOME}/Projects/speccy/zexall.git/zexdoc.asm)
+#set(DATA_ASM $ENV{HOME}/Projects/speccy/zexall.git/zexdoc.asm)
+#set(DATA_ASM $ENV{HOME}/Projects/speccy/zexall.git/zexall.asm)
+#set(DATA_ASM $ENV{HOME}/Projects/speccy/z80test.git/src/z80full.asm)
+set(DATA_ASM $ENV{HOME}/Projects/speccy/z80test.git/src/z80doc.asm)
+#set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/cpd_test.asm)
 cmake_path(GET DATA_ASM STEM DATA_FILENAME_STEM)
 set(DATA_BIN     ${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILENAME_STEM}.bin)
 set(DATA_LST     ${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILENAME_STEM}.lst)
+set(DATA_SLD     ${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILENAME_STEM}.sld)
 set(DATA_HEADER  ${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILENAME_STEM}.h)
 set(DATA_SYMBOL_NAME ${DATA_FILENAME_STEM}_prog)
 
@@ -38,10 +43,16 @@ find_program(SJASMPLUS_EXECUTABLE
 	DOC "Path do sjasmplus assembler"
 )
 
+find_program(SJASM_EXECUTABLE
+	NAMES sjasm
+	DOC "Path do sjasm assembler"
+)
+
 add_custom_command(
     OUTPUT ${DATA_BIN}
     # without the --syntax=a, ops like `and a, 3' are assembled into two operations, that is incorrectly
-    COMMAND ${SJASMPLUS_EXECUTABLE} --syntax=aF --color=on ${DATA_ASM} --raw=${DATA_BIN} --lst=${DATA_LST}
+    # COMMAND ${SJASMPLUS_EXECUTABLE} --fullpath --syntax=aF --color=on ${DATA_ASM} --sld=${DATA_SLD} --raw=${DATA_BIN} --lst=${DATA_LST}
+    COMMAND ${SJASM_EXECUTABLE} ${DATA_ASM} ${DATA_BIN}
     DEPENDS ${DATA_ASM}
     COMMENT "Assembling ${DATA_ASM} -> ${DATA_BIN}"
     VERBATIM

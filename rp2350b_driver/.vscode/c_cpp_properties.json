@@ -1,0 +1,49 @@
+{
+    "configurations": [
+        {
+            "name": "Mac",
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++14",
+            "intelliSenseMode": "macos-clang-arm64",
+            "configurationProvider": "mesonbuild.mesonbuild"
+        },
+        {
+            "name": "RP2350",
+            "includePath": [
+                "/Users/orl/Projects/pico-sdk/src/boards/include",
+                //"/Users/orl/Projects/pico-sdk/src/rp2_common/**/include",
+                "/Users/orl/Projects/pico-sdk/src/rp2_common/**",
+                "/Users/orl/Projects/pico-sdk/src/rp2350/*/include",
+                "/Users/orl/Projects/pico-sdk/src/common/hardware_claim/include",
+                "/Users/orl/Projects/pico-sdk/src/common/pico_base_headers/include",
+                "/Users/orl/Projects/pico-sdk/src/common/pico_stdlib_headers/include",
+                "/Users/orl/Projects/pico-sdk/src/common/pico_time/include",
+                // "/Users/orl/Projects/pico-sdk/src/rp2_common/hardware_gpio/include"
+                // "/User/orl/Projects/pico-sdk/src/common/*/include",
+                // "/User/orl/Projects/pico-sdk/",
+                "${workspaceFolder}/derived/drv_rel/generated/pico_base", // appears only after first build
+                "${workspaceFolder}/derived/drv_dbg/generated/pico_base", // appears only after first build
+                "${workspaceFolder}/derived/drv_rel", // appears only after first build
+                "${workspaceFolder}/derived/drv_dbg", // appears only after first build
+                //"${workspaceFolder}/*"
+            ],
+            "defines": [
+                "PICO_BOARD=solderparty_rp2350_stamp_xl",
+                "PICO_PLATFORM=rp2350-arm-s",
+                "LIB_PICO_STDIO_RTT=1"
+            ],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++14",
+            "intelliSenseMode": "macos-clang-arm64",
+            "configurationProvider": "mesonbuild.mesonbuild"
+        }
+
+    ],
+    "version": 4
+}
