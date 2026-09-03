@@ -1,0 +1,94 @@
+; The bus state machine runs on PIO0 and the clock state machine on PIO1.
+;
+; PIO1 raises IRQ0 in the previous PIO (PIO0) on each falling clock edge.
+; PIO0 leaves IRQ0 raised while the M33 services a bus access, freezing CLK low.
+; Once data is ready, PIO0 raises IRQ1 in the next PIO (PIO1), clears IRQ0,
+; and waits for the Z80 to finish the cycle while the clock runs freely.
+
+.program z80_frozen_clock
+.pio_version 1
+.side_set 1
+
+.define public SAMPLE_IRQ 0
+.define public BUSY_IRQ   1
+
+.wrap_target
+normal_clock:
+    ; At clk_sys=150 MHz and divider=1 these balanced 20-cycle half-periods
+    ; produce 3.75 MHz. The driver applies a divider for lower frequencies.
+    ; The low phase also gives PIO0 time to reject an idle/refresh cycle before
+    ; PIO1 reaches the WAIT instruction below.
+    nop side 1 [15]
+    nop side 1 [3]
+    irq prev SAMPLE_IRQ side 0 [15]
+    wait 0 irq prev SAMPLE_IRQ side 0
+    mov x, status side 0
+    jmp !x normal_clock side 0 [1]
+
+busy_clock:
+    ; The serviced transaction is completing. Run CLK without asking PIO0 to
+    ; inspect each falling edge until BUSY_IRQ is cleared.
+    nop side 1 [15]
+    nop side 1 [3]
+    mov x, status side 0 [15]
+    jmp x-- busy_clock side 0 [3]
+.wrap
+
+
+.program z80_frozen_bus
+.pio_version 1
+
+.define public SAMPLE_IRQ 0
+.define public BUSY_IRQ   1
+.define public Z80_IORQ  29
+.define public Z80_RD    30
+.define public Z80_WR    31
+.mov_status irq set SAMPLE_IRQ
+
+; Inactive IORQ/RD/WR is binary 111.
+set y, 7
+
+.wrap_target
+bus_sample:
+    ; WAIT 1 IRQ would acknowledge/clear the flag. Poll through MOV STATUS so
+    ; SAMPLE_IRQ remains raised and continues to hold the clock SM low.
+    mov x, status
+    jmp !x bus_sample
+    nop [3]
+    mov isr, pins
+
+    ; A serviced cycle has at least one of IORQ, RD or WR active. A refresh
+    ; cycle has all three inactive and must not enter the M33 request path.
+    mov osr, isr
+    out null, 21
+    out x, 3
+    jmp x!=y access
+
+no_access:
+    irq clear SAMPLE_IRQ
+    jmp bus_sample
+
+access:
+    ; SAMPLE_IRQ remains asserted, so the clock SM is stopped with CLK low.
+    mov isr, pins
+    push block
+    pull block
+
+    out pins, 8
+    out x, 1
+    jmp !x no_drive
+    mov pindirs, ~null
+
+no_drive:
+    ; Tell the clock SM to free-run, then release its low-edge gate.
+    irq next BUSY_IRQ
+    irq clear SAMPLE_IRQ
+
+    ; The clock is now running. Keep data driven until the bus cycle ends.
+    wait 1 gpio Z80_RD
+    wait 1 gpio Z80_WR
+    wait 1 gpio Z80_IORQ
+    mov pindirs, null
+    irq next clear BUSY_IRQ
+    jmp bus_sample
+.wrap

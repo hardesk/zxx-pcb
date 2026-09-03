@@ -9,60 +9,12 @@
 #include <pico/stdio.h>
 #include <hardware/gpio.h>
 
+#include "z80_pins.hpp"
+#include "z80_pio_bus.hpp"
+
 using std::size_t;
 
 #define PIN_DEBUG 1
-
-enum Pins {
-	pD0  =  0,
-	pD1  =  1,
-	pD2  =  2,
-	pD3  =  3,
-
-	pD4  =  4,
-	pD5  =  5,
-	pD6  =  6,
-	pD7  =  7,
-
-	pA0  =  8,
-	pA1  =  9,
-	pA2  = 10,
-	pA3  = 11,
-
-	pA4  = 12,
-	pA5  = 13,
-	pA6  = 14,
-	pA7  = 15,
-
-	pA8  = 16,
-	pA9  = 17,
-	pA10 = 18,
-	pA11 = 19,
-
-	pA12 = 20,
-	pA13 = 21,
-	pA14 = 22,
-	pA15 = 23,
-
-	pCLK = 24,      // cpu in 
-    pRESET = 25,    // cpu in
-    pINT = 26,      // cpu in
-    pHALT = 27,     // cpu out
-
-	pMREQ = 28,     // cpu out
-    pIORQ = 29,     // cpu out
-	pRD = 30,       // cpu out
-	pWR = 31,       // cpu out
-
-    pWAIT = 32,     // cpu in
-    pNMI = 33,      // cpu in
-    pBUSRQ = 34,    // cpu in
-    pBUSACK = 35,   // cpu out
-
-    pM1 = 36,       // cpu out
-
-    pPIN_COUNT
-};
 
 #define IO_DATA_SHIFT 0
 #define IO_DATA 0x0000'00ffu
@@ -90,7 +42,7 @@ struct ZxDbgPins
     uint8_t data;
     union {
         struct {
-            bool CLK:1, RESET:1, INT:1, HALT:1, MREQ:1, IORQ:1, RD:1, WR:1, WAIT:1, NMI:1, BUSREQ:1, BUSACK:1, M1:1;
+            bool CLK:1, RESET:1, WAIT:1, M1:1, MREQ:1, IORQ:1, RD:1, WR:1, INT:1, NMI:1, BUSREQ:1, BUSACK:1, HALT:1;
         };
         uint16_t value;
     } pins;
@@ -215,7 +167,7 @@ struct ZxEnv
         }
     }
 
-private:
+protected:
     void impl_debug_trap(uint8_t trapno) {}
 
     void impl_on_memread(uint16_t addr, bool m1) {}
@@ -278,6 +230,40 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         }
     }
     uint8_t handle_io_in(uint16_t addr) { return 0; }
+
+    uint8_t handle_interrupt_ack() { return 0xff; }
+
+    uint32_t service_pio_request(z80pio::BusRequest const& request) {
+        const uint16_t addr = request.address();
+        const uint8_t data = request.data();
+
+        if (request.mreq() && request.rd()) {
+            uint8_t value = static_cast<uint8_t>(m_ram[addr]);
+            impl_on_memread(addr, request.m1());
+            return z80pio::read_reply(value);
+        }
+
+        if (request.mreq() && request.wr()) {
+            if (addr == 0)
+                impl_debug_trap(data);
+            impl_on_memwrite(addr, data);
+            m_ram[addr] = static_cast<char>(data);
+            return z80pio::write_reply();
+        }
+
+        if (request.iorq() && request.rd())
+            return z80pio::read_reply(handle_io_in(addr));
+
+        if (request.iorq() && request.wr()) {
+            handle_io_out(addr, data);
+            return z80pio::write_reply();
+        }
+
+        if (request.iorq() && request.m1())
+            return z80pio::read_reply(handle_interrupt_ack());
+
+        return z80pio::write_reply();
+    }
 
     void half_clk(bool raise) {
         gpio_put(pCLK, raise);
@@ -429,9 +415,6 @@ int main()
     zx.load(z80_prog, count_of(z80_prog), 0x8000);
     zx.dump_memory(0, 512, { .width = 16, .ascii = true } );
 
-    uint64_t tick = 0;
-    unsigned clk_level = 0;
-
     printf("Hello from RP2350 over RTT!\n");
     char buf[128];
     auto fmt_pad = [&buf](uint32_t pad) {
@@ -454,47 +437,12 @@ int main()
     //     printf(" - pin %2d func %d oe %d PAD [[ %s ]]\n", i, gpio_get_function(i), gpio_get_dir(i), fmt_pad(pads_bank0_hw->io[i]));
     // }
 
-    while (1) {
-        zx.half_clk(clk_level==0);
+    constexpr uint32_t kZ80ClockHz = 3'500'000;
+    z80pio::ActiveBusDriver bus;
+    bus.init(kZ80ClockHz);
 
-        #if 0
-        uint64_t addr_data_ctrl = gpio_get_all64();
-        uint16_t ctrl_shifted = extract_ctrl(addr_data_ctrl); 
-        #else
-        uint32_t addr_data_ctrl = gpio_get_all();
-        uint32_t ctrlhi = gpio_get_all_hi();
-        uint16_t ctrl_shifted = extract_ctrl(addr_data_ctrl, ctrlhi);
-        #endif
-#if PIN_DEBUG
-        // printf("pins hilo %08x %08x\n", gpio_get_all_hi(), gpio_get_all());
-#endif 
-
-        //ZxDbgPins dbg(addr_data_ctrl, ctrlhi);
-        // if (clk_level == 0 && dbg.pins.MREQ == 0 && !(dbg.pins.RD==1 && dbg.pins.WR==1))
-        //     dbg.dump_state(tick);
-
-        zx.react(ctrl_shifted, addr_data_ctrl & (IO_ADDR|IO_DATA));
-
-        clk_level = 1u - clk_level;
-        if (clk_level == 1)
-            ++tick;
-
-        // if ((tick & 0x0f'ffffull) == 0) {
-        //     gpio_put(LED_PIN, true);
-        // } else if ((tick & 0x0f'ffffull) == 10000u) {
-        //     gpio_put(LED_PIN, false);
-        // }
-        #if 0
-        if ((tick&0x1ffffff) == 0 && clk_level == 0) {
-            // printf("\033[36m<T %llu>\033[0m", tick);
-            char xx[] = "0123456789abcdef";
-            printf("\033[36m%c\033[0m", xx[(tick>>25)&0xf]);
-            //zx.dump_memory(0x1d00, 256, { .width = 8, .show_address = true, .ascii = true } );
-        }
-        #endif
-
-
-
-        //sleep_us(1);
+    while (true) {
+        const z80pio::BusRequest request = bus.read_request();
+        bus.write_reply(zx.service_pio_request(request));
     }
 }

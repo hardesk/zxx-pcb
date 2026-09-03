@@ -1,0 +1,62 @@
+.program z80_wait_clock
+.side_set 1
+
+.wrap_target
+    nop side 1
+    nop side 0
+.wrap
+
+
+.program z80_wait_bus
+.pio_version 1
+
+.define public Z80_CLK  24
+.define public Z80_WAIT 26
+.define public Z80_IORQ 29
+.define public Z80_RD   30
+.define public Z80_WR   31
+
+; Y=7 is the inactive IORQ/RD/WR value.
+set y, 7
+
+.wrap_target
+    ; Detect and sample the falling clock edge. The delay allows the Z80's
+    ; address and control outputs to propagate through the input synchronisers.
+    wait 1 gpio Z80_CLK
+    wait 0 gpio Z80_CLK [3]
+    mov isr, pins
+
+    ; A serviced cycle has at least one of IORQ, RD or WR active. A refresh
+    ; cycle has all three inactive and must not enter the M33 request path.
+    mov osr, isr
+    out null, 21
+    out x, 3
+    jmp x!=y access
+    jmp no_access
+
+access:
+    ; Hold the CPU in Tw while the M33 services the request.
+    set pins, 0
+    mov isr, pins
+    push block
+    pull block
+
+    ; Reply bits 0..7 contain data; bit 8 enables the data-bus drivers.
+    out pins, 8
+    out x, 1
+    jmp !x no_drive
+    mov pindirs, ~null
+
+no_drive:
+    set pins, 1
+
+    ; Keep read data driven until the CPU releases the cycle. These waits also
+    ; suppress duplicate requests during T3 and inserted Tw states.
+    wait 1 gpio Z80_RD
+    wait 1 gpio Z80_WR
+    wait 1 gpio Z80_IORQ
+    mov pindirs, null
+
+no_access:
+    set y, 7
+.wrap

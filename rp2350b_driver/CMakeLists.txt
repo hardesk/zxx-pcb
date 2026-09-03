@@ -23,7 +23,7 @@ set(CMAKE_C_FLAGS_DEBUG "-O3 -g" CACHE STRING "" FORCE)
 set(CMAKE_CXX_FLAGS_DEBUG "-O3 -g" CACHE STRING "" FORCE)
 
 # Paths for the data build
-#set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/test.asm)
+# set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/test.asm)
 #set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/prelim_test.asm)
 #set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/ram_test.asm)
 #set(DATA_ASM $ENV{HOME}/Projects/speccy/zexall.git/zexdoc.asm)
@@ -74,11 +74,37 @@ add_executable(rp2350_driver
 	${DATA_HEADER}
 )
 
+set(Z80_BUS_MODE "WAIT" CACHE STRING
+    "Z80 bus backend: MANUAL, WAIT or FROZEN")
+set_property(CACHE Z80_BUS_MODE PROPERTY STRINGS MANUAL WAIT FROZEN)
+
+if (Z80_BUS_MODE STREQUAL "MANUAL")
+    target_sources(rp2350_driver PRIVATE z80_bus_manual.cpp)
+    target_compile_definitions(rp2350_driver PRIVATE Z80_BUS_MODE=0)
+elseif (Z80_BUS_MODE STREQUAL "WAIT")
+    target_sources(rp2350_driver PRIVATE z80_pio_bus_wait.cpp)
+    pico_generate_pio_header(
+        rp2350_driver
+        ${CMAKE_CURRENT_LIST_DIR}/z80_bus_wait.pio
+    )
+    target_compile_definitions(rp2350_driver PRIVATE Z80_BUS_MODE=1)
+elseif (Z80_BUS_MODE STREQUAL "FROZEN")
+    target_sources(rp2350_driver PRIVATE z80_pio_bus_frozen.cpp)
+    pico_generate_pio_header(
+        rp2350_driver
+        ${CMAKE_CURRENT_LIST_DIR}/z80_bus_frozen.pio
+    )
+    target_compile_definitions(rp2350_driver PRIVATE Z80_BUS_MODE=2)
+else()
+    message(FATAL_ERROR
+        "Z80_BUS_MODE must be MANUAL, WAIT or FROZEN, got: ${Z80_BUS_MODE}")
+endif()
+
 target_compile_definitions(rp2350_driver
     PUBLIC SEGGER_RTT_MODE_DEFAULT=SEGGER_RTT_MODE_BLOCK_IF_FIFO_FULL
     PUBLIC DATA_ASM_FILE="${DATA_FILENAME_STEM}.h"
     PUBLIC DATA_ASM_LABEL=${DATA_FILENAME_STEM}_prog
-    )
+)
 
 target_include_directories(rp2350_driver PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
@@ -89,5 +115,9 @@ pico_enable_stdio_uart(rp2350_driver 0)
 pico_enable_stdio_usb(rp2350_driver 0)
 pico_enable_stdio_rtt(rp2350_driver 1)
 
-target_link_libraries(rp2350_driver pico_stdlib)
+target_link_libraries(rp2350_driver
+    pico_stdlib
+    hardware_clocks
+    hardware_pio
+)
 pico_add_extra_outputs(rp2350_driver)

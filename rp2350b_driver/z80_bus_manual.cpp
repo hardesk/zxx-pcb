@@ -1,0 +1,90 @@
+#include "z80_pio_bus.hpp"
+
+#include <hardware/gpio.h>
+
+#include "z80_pins.hpp"
+
+namespace z80pio {
+
+namespace {
+
+// Match the FIFO layout produced by the PIO backends with IN_BASE=GPIO8:
+// address[15:0], control[23:16], data[31:24].
+constexpr uint32_t rotate_gpio_sample(uint32_t gpio)
+{
+    return (gpio >> 8) | (gpio << 24);
+}
+
+constexpr bool active_low(uint32_t sample, uint32_t mask)
+{
+    return !(sample & mask);
+}
+
+} // namespace
+
+void ManualBusDriver::init(uint32_t z80_hz)
+{
+    // This backend deliberately preserves the old unpaced software loop.
+    // z80_hz is meaningful only to the hardware-clocked PIO backends.
+    (void)z80_hz;
+
+    gpio_set_function(pCLK, GPIO_FUNC_SIO);
+    gpio_set_dir(pCLK, true);
+    gpio_put(pCLK, false);
+    gpio_set_dir_masked(kZ80DataMask, 0);
+
+    previous_raw_ = rotate_gpio_sample(gpio_get_all());
+    next_clock_high_ = true;
+}
+
+BusRequest ManualBusDriver::read_request()
+{
+    while (true) {
+        gpio_put(pCLK, next_clock_high_);
+        next_clock_high_ = !next_clock_high_;
+
+        const uint32_t raw = rotate_gpio_sample(gpio_get_all());
+        const uint32_t changed = raw ^ previous_raw_;
+        previous_raw_ = raw;
+
+        // The original loop stopped driving read data when either bus cycle
+        // ended. Do this before looking for a new request on the same sample.
+        if (((raw & kRawMreq) && (changed & kRawMreq)) ||
+            ((raw & kRawIorq) && (changed & kRawIorq))) {
+            gpio_set_dir_masked(kZ80DataMask, 0);
+        }
+
+        const bool mreq = active_low(raw, kRawMreq);
+        const bool iorq = active_low(raw, kRawIorq);
+        const bool rd = active_low(raw, kRawRd);
+        const bool wr = active_low(raw, kRawWr);
+
+        // As in the old react() loop, capture normal requests on the falling
+        // edge of RD or WR.
+        if (mreq && ((rd && (changed & kRawRd)) ||
+                     (wr && (changed & kRawWr)))) {
+            return {raw};
+        }
+
+        if (iorq && ((rd && (changed & kRawRd)) ||
+                     (wr && (changed & kRawWr)))) {
+            return {raw};
+        }
+
+        // An interrupt acknowledge has IORQ and M1 low without RD or WR.
+        if (iorq && active_low(raw, kRawM1) &&
+            (changed & (kRawIorq | kRawM1))) {
+            return {raw};
+        }
+    }
+}
+
+void ManualBusDriver::write_reply(uint32_t reply)
+{
+    if (reply & kReplyDriveData) {
+        gpio_put_masked(kZ80DataMask, reply & kZ80DataMask);
+        gpio_set_dir_masked(kZ80DataMask, kZ80DataMask);
+    }
+}
+
+} // namespace z80pio

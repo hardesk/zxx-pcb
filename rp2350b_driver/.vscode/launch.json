@@ -7,7 +7,7 @@
             "request": "launch",
             "servertype": "openocd",
             "cwd": "${workspaceFolder}",
-            "executable": "${workspaceFolder}/derived/drv_dbg/rp2350_driver.elf",
+            "executable": "${workspaceFolder}/derived/drv_rel/rp2350_driver.elf",
             "runToEntryPoint": "main",
             "openOCDLaunchCommands": [
                 "gdb port 50000",
