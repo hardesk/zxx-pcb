@@ -49,7 +49,7 @@ void WaitStateBusDriver::init(uint32_t z80_hz)
     sm_config_set_clkdiv(&clock_config, std::max(1.0f, clock_divider));
 
     pio_sm_config bus_config = z80_wait_bus_program_get_default_config(bus_offset);
-    sm_config_set_in_pins(&bus_config, pA0);
+    sm_config_set_in_pins(&bus_config, pD0);
     sm_config_set_in_pin_count(&bus_config, 32);
     sm_config_set_out_pins(&bus_config, pD0, 8);
     sm_config_set_set_pins(&bus_config, pWAIT, 1);

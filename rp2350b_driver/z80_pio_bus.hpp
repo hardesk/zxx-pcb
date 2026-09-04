@@ -22,17 +22,17 @@
 
 namespace z80pio {
 
-// PIO IN_BASE is GPIO8. This rotates the physical GPIO0..31 image so
-// address, control, and data occupy convenient fields in one FIFO word.
+// Requests preserve the native GPIO0..31 image: data[7:0], address[23:8],
+// and control[31:24].
 enum RawBusBits : uint32_t {
-    kRawClk   = 1u << 16,
-    kRawReset = 1u << 17,
-    kRawWait  = 1u << 18,
-    kRawM1    = 1u << 19,
-    kRawMreq  = 1u << 20,
-    kRawIorq  = 1u << 21,
-    kRawRd    = 1u << 22,
-    kRawWr    = 1u << 23,
+    kRawClk   = 1u << 24,
+    kRawReset = 1u << 25,
+    kRawWait  = 1u << 26,
+    kRawM1    = 1u << 27,
+    kRawMreq  = 1u << 28,
+    kRawIorq  = 1u << 29,
+    kRawRd    = 1u << 30,
+    kRawWr    = 1u << 31,
 };
 
 constexpr uint32_t kReplyDriveData = 1u << 8;
@@ -40,8 +40,8 @@ constexpr uint32_t kReplyDriveData = 1u << 8;
 struct BusRequest {
     uint32_t raw;
 
-    uint16_t address() const { return static_cast<uint16_t>(raw); }
-    uint8_t data() const { return static_cast<uint8_t>(raw >> 24); }
+    uint16_t address() const { return static_cast<uint16_t>(raw >> 8); }
+    uint8_t data() const { return static_cast<uint8_t>(raw); }
 
     bool m1() const { return !(raw & kRawM1); }
     bool mreq() const { return !(raw & kRawMreq); }

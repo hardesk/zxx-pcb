@@ -67,7 +67,7 @@ not_in_reset:
     ; A serviced cycle has at least one of IORQ, RD or WR active. A refresh
     ; cycle has all three inactive and must not enter the M33 request path.
     mov osr, isr
-    out null, 21
+    out null, 29
     out x, 3
     jmp x!=y access
 

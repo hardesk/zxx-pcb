@@ -51,7 +51,7 @@ void FrozenClockBusDriver::init(uint32_t z80_hz)
 
     pio_sm_config bus_config =
         z80_frozen_bus_program_get_default_config(bus_offset);
-    sm_config_set_in_pins(&bus_config, pA0);
+    sm_config_set_in_pins(&bus_config, pD0);
     sm_config_set_in_pin_count(&bus_config, 32);
     sm_config_set_out_pins(&bus_config, pD0, 8);
     sm_config_set_jmp_pin(&bus_config, pRESET);

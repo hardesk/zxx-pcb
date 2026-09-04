@@ -9,13 +9,6 @@ namespace z80pio {
 
 namespace {
 
-// Match the FIFO layout produced by the PIO backends with IN_BASE=GPIO8:
-// address[15:0], control[23:16], data[31:24].
-constexpr uint32_t rotate_gpio_sample(uint32_t gpio)
-{
-    return (gpio >> 8) | (gpio << 24);
-}
-
 constexpr bool active_low(uint32_t sample, uint32_t mask)
 {
     return !(sample & mask);
@@ -34,7 +27,7 @@ void ManualBusDriver::init(uint32_t z80_hz)
     gpio_put(pCLK, false);
     gpio_set_dir_masked(kZ80DataMask, 0);
 
-    previous_raw_ = rotate_gpio_sample(gpio_get_all());
+    previous_raw_ = gpio_get_all();
     next_clock_high_ = true;
 }
 
@@ -56,7 +49,7 @@ void ManualBusDriver::end_reset()
 
     gpio_set_dir_masked(kZ80DataMask, 0);
     gpio_put(pRESET, true);
-    previous_raw_ = rotate_gpio_sample(gpio_get_all());
+    previous_raw_ = gpio_get_all();
     next_clock_high_ = true;
 }
 
@@ -66,7 +59,7 @@ BusRequest ManualBusDriver::read_request()
         gpio_put(pCLK, next_clock_high_);
         next_clock_high_ = !next_clock_high_;
 
-        const uint32_t raw = rotate_gpio_sample(gpio_get_all());
+        const uint32_t raw = gpio_get_all();
         const uint32_t changed = raw ^ previous_raw_;
         previous_raw_ = raw;
 
