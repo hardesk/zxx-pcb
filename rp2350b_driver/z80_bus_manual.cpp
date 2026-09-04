@@ -1,6 +1,7 @@
 #include "z80_pio_bus.hpp"
 
 #include <hardware/gpio.h>
+#include <pico/time.h>
 
 #include "z80_pins.hpp"
 
@@ -33,6 +34,28 @@ void ManualBusDriver::init(uint32_t z80_hz)
     gpio_put(pCLK, false);
     gpio_set_dir_masked(kZ80DataMask, 0);
 
+    previous_raw_ = rotate_gpio_sample(gpio_get_all());
+    next_clock_high_ = true;
+}
+
+void ManualBusDriver::begin_reset()
+{
+    gpio_put(pRESET, false);
+}
+
+void ManualBusDriver::end_reset()
+{
+    // RESET needs at least three complete clocks. Eight deliberately slow
+    // clocks leave ample margin and finish with CLK low.
+    for (uint i = 0; i < 8; ++i) {
+        gpio_put(pCLK, true);
+        busy_wait_us_32(1);
+        gpio_put(pCLK, false);
+        busy_wait_us_32(1);
+    }
+
+    gpio_set_dir_masked(kZ80DataMask, 0);
+    gpio_put(pRESET, true);
     previous_raw_ = rotate_gpio_sample(gpio_get_all());
     next_clock_high_ = true;
 }

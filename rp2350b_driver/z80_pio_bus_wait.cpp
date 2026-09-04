@@ -4,6 +4,7 @@
 
 #include <hardware/clocks.h>
 #include <hardware/pio.h>
+#include <pico/stdlib.h>
 
 #include "z80_bus_wait.pio.h"
 #include "z80_pins.hpp"
@@ -26,7 +27,11 @@ void assign_wait_bus_pins(PIO pio)
 
 void WaitStateBusDriver::init(uint32_t z80_hz)
 {
+    hard_assert(z80_hz != 0);
     pio_set_gpio_base(pio_, 0);
+    reset_hold_us_ = std::max<uint32_t>(
+        10,
+        static_cast<uint32_t>((8'000'000ull + z80_hz - 1) / z80_hz));
 
     clock_sm_ = pio_claim_unused_sm(pio_, true);
     bus_sm_ = pio_claim_unused_sm(pio_, true);
@@ -48,6 +53,7 @@ void WaitStateBusDriver::init(uint32_t z80_hz)
     sm_config_set_in_pin_count(&bus_config, 32);
     sm_config_set_out_pins(&bus_config, pD0, 8);
     sm_config_set_set_pins(&bus_config, pWAIT, 1);
+    sm_config_set_jmp_pin(&bus_config, pRESET);
     sm_config_set_out_shift(&bus_config, true, false, 32);
     sm_config_set_clkdiv(&bus_config, 1.0f);
 
@@ -64,6 +70,25 @@ void WaitStateBusDriver::init(uint32_t z80_hz)
     // Let the bus state machine reach its first edge wait before CLK starts.
     pio_sm_set_enabled(pio_, bus_sm_, true);
     pio_sm_set_enabled(pio_, clock_sm_, true);
+}
+
+void WaitStateBusDriver::begin_reset()
+{
+    gpio_put(pRESET, false);
+}
+
+void WaitStateBusDriver::end_reset()
+{
+    // Hold for at least eight clocks (and at least 10 us). The Z80 requires
+    // three complete clocks, so this leaves margin at any configured rate.
+    busy_wait_us_32(reset_hold_us_);
+
+    // Deassert during the low phase, comfortably before the next rising edge.
+    while (!gpio_get(pCLK))
+        tight_loop_contents();
+    while (gpio_get(pCLK))
+        tight_loop_contents();
+    gpio_put(pRESET, true);
 }
 
 BusRequest WaitStateBusDriver::read_request()

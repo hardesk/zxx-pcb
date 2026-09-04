@@ -188,7 +188,8 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         delete[] m_ram;
     }
     
-    static constexpr uint64_t kInitOne = (1ull<<pINT) | (1ull<<pWAIT) | (1ull<<pNMI) | (1ull<<pBUSRQ);
+    static constexpr uint64_t kInitialHighPins =
+        (1ull << pINT) | (1ull << pWAIT) | (1ull << pNMI) | (1ull << pBUSRQ);
 
     void init() {
         uint64_t pins_oe = 
@@ -202,13 +203,11 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         for(int i=0; i<pPIN_COUNT; ++i)
             gpio_set_pulls(i, false, false);
         gpio_set_function_masked64(IO_ALL, GPIO_FUNC_SIO);
-        gpio_set_dir_all_bits64(pins_oe);
-        gpio_put_all64(kInitOne);
 
-        // for(size_t i=0; i<409600; ++i) {
-        //     half_clk((i&1) == 0);
-        //     sleep_us(1);
-        // }
+        // Set the output latches before enabling them. RESET and CLK start
+        // low; interrupt inputs, WAIT and BUSRQ start inactive (high).
+        gpio_put_all64(kInitialHighPins);
+        gpio_set_dir_all_bits64(pins_oe);
     }
 
     void expose_data(uint8_t dat) {
@@ -263,32 +262,6 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
             return z80pio::read_reply(handle_interrupt_ack());
 
         return z80pio::write_reply();
-    }
-
-    void half_clk(bool raise) {
-        gpio_put(pCLK, raise);
-    }
-
-    void reset() {
-        #if PIN_DEBUG
-        printf("ZxEnv: Resetting CPU\n");
-        #endif
-        gpio_put_masked64(kInitOne, kInitOne);
-        gpio_put_masked(1u<<pRESET, 0u);
-        for(size_t i=0; i<64; ++i) {
-            half_clk((i&1) == 0);
-            #if PIN_DEBUG
-            ZxDbgPins dbg(gpio_get_all64());
-            dbg.dump_state(i);
-            #endif
-            sleep_us(1);
-        }
-        gpio_put_masked64((1u<<pRESET), (1u<<pRESET));
-        #if PIN_DEBUG
-        printf("ZxEnv: Reset finished.\n");
-        ZxDbgPins dbg(gpio_get_all64());
-        dbg.dump_state(7);
-        #endif
     }
 
     void prepare_cpm() {
@@ -361,12 +334,50 @@ inline static uint32_t gpio_get_all_hi() {
 
 #define LED_PIN (32+14)
 
+constexpr uint kZ80ResetButtonPin = 40;
+
+void init_z80_reset_button()
+{
+    gpio_init(kZ80ResetButtonPin);
+    gpio_set_dir(kZ80ResetButtonPin, GPIO_IN);
+    gpio_pull_up(kZ80ResetButtonPin);
+}
+
+bool z80_reset_button_pressed()
+{
+    return !gpio_get(kZ80ResetButtonPin);
+}
+
 void blink_hello() {
     for(size_t i=0; i<10; ++i) {
         gpio_put(LED_PIN, (i&1) == 0);
         sleep_ms(50);
     }
 }
+
+struct DebButton {
+    static constexpr unsigned POLL_MS = 10;
+    DebButton() : next_poll(make_timeout_time_ms(POLL_MS)), last_sample(false), debounced(false) {
+    }
+
+    template<class F>
+    bool check( F f ) {
+        bool pressed = false;
+        if (time_reached(next_poll)) {
+            next_poll = make_timeout_time_ms(POLL_MS);
+            const bool sample = f();
+            if (sample == last_sample && sample != debounced)
+                pressed = debounced = sample;
+            last_sample = sample;
+        }
+        return pressed;
+    }
+
+private:
+    absolute_time_t next_poll = 0;
+    bool last_sample:1;
+    bool debounced:1;
+};
 
 #ifdef DATA_ASM_FILE
 
@@ -405,7 +416,7 @@ int main()
 
     Rp2350ZxEnv zx;
     zx.init();
-    zx.reset();
+    init_z80_reset_button();
 
     zx.prepare_cpm();
 
@@ -440,9 +451,25 @@ int main()
     constexpr uint32_t kZ80ClockHz = 3'500'000;
     z80pio::ActiveBusDriver bus;
     bus.init(kZ80ClockHz);
+    bus.reset_cpu();
 
+    DebButton reset_btn;
     while (true) {
         const z80pio::BusRequest request = bus.read_request();
+
+        bool reset_requested = reset_btn.check(&z80_reset_button_pressed);
+
+        // Assert RESET before replying so the currently stalled transaction
+        // is the last one. Once the reply releases the CPU, the PIO reset
+        // guard keeps subsequent samples out of the request FIFO.
+        if (reset_requested)
+            bus.begin_reset();
+
         bus.write_reply(zx.service_pio_request(request));
+
+        if (reset_requested) {
+            bus.end_reset();
+            printf("Z80 reset from GPIO40 button\n");
+        }
     }
 }

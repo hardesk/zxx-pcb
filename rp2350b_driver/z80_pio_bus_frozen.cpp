@@ -4,6 +4,7 @@
 
 #include <hardware/clocks.h>
 #include <hardware/pio.h>
+#include <pico/stdlib.h>
 
 #include "z80_bus_frozen.pio.h"
 #include "z80_pins.hpp"
@@ -29,10 +30,14 @@ void assign_frozen_bus_pins(PIO bus_pio, PIO clock_pio)
 
 void FrozenClockBusDriver::init(uint32_t z80_hz)
 {
+    hard_assert(z80_hz != 0);
     // The PIO assembly uses NEXT/PREV IRQ addressing and therefore relies on
     // this exact adjacency: bus=PIO0, clock=PIO1.
     pio_set_gpio_base(bus_pio_, 0);
     pio_set_gpio_base(clock_pio_, 0);
+    reset_hold_us_ = std::max<uint32_t>(
+        10,
+        static_cast<uint32_t>((8'000'000ull + z80_hz - 1) / z80_hz));
 
     bus_sm_ = pio_claim_unused_sm(bus_pio_, true);
     clock_sm_ = pio_claim_unused_sm(clock_pio_, true);
@@ -49,6 +54,7 @@ void FrozenClockBusDriver::init(uint32_t z80_hz)
     sm_config_set_in_pins(&bus_config, pA0);
     sm_config_set_in_pin_count(&bus_config, 32);
     sm_config_set_out_pins(&bus_config, pD0, 8);
+    sm_config_set_jmp_pin(&bus_config, pRESET);
     sm_config_set_out_shift(&bus_config, true, false, 32);
     sm_config_set_clkdiv(&bus_config, 1.0f);
 
@@ -74,6 +80,25 @@ void FrozenClockBusDriver::init(uint32_t z80_hz)
     // PIO0 waits for PIO1's first sample IRQ before PIO1 starts CLK.
     pio_sm_set_enabled(bus_pio_, bus_sm_, true);
     pio_sm_set_enabled(clock_pio_, clock_sm_, true);
+}
+
+void FrozenClockBusDriver::begin_reset()
+{
+    gpio_put(pRESET, false);
+}
+
+void FrozenClockBusDriver::end_reset()
+{
+    // While RESET is low the bus SM rejects all accesses and clears each
+    // SAMPLE_IRQ, so the clock SM cannot remain frozen.
+    busy_wait_us_32(reset_hold_us_);
+
+    // Deassert during the low phase, comfortably before the next rising edge.
+    while (!gpio_get(pCLK))
+        tight_loop_contents();
+    while (gpio_get(pCLK))
+        tight_loop_contents();
+    gpio_put(pRESET, true);
 }
 
 BusRequest FrozenClockBusDriver::read_request()

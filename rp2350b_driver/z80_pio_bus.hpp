@@ -60,9 +60,15 @@ constexpr uint32_t write_reply()
     return 0;
 }
 
+// reset_cpu() is for startup or another quiescent point. While servicing a
+// request, use begin_reset(), write_reply(), end_reset() in that order so a
+// WAIT/frozen-clock transaction cannot leave the reset without clock edges.
 class ManualBusDriver {
 public:
     void init(uint32_t z80_hz);
+    void begin_reset();
+    void end_reset();
+    void reset_cpu() { begin_reset(); end_reset(); }
     BusRequest read_request();
     void write_reply(uint32_t reply);
 
@@ -74,6 +80,9 @@ private:
 class WaitStateBusDriver {
 public:
     void init(uint32_t z80_hz);
+    void begin_reset();
+    void end_reset();
+    void reset_cpu() { begin_reset(); end_reset(); }
     BusRequest read_request();
     void write_reply(uint32_t reply);
 
@@ -81,11 +90,15 @@ private:
     PIO pio_ = pio0;
     uint clock_sm_ = 0;
     uint bus_sm_ = 0;
+    uint32_t reset_hold_us_ = 10;
 };
 
 class FrozenClockBusDriver {
 public:
     void init(uint32_t z80_hz);
+    void begin_reset();
+    void end_reset();
+    void reset_cpu() { begin_reset(); end_reset(); }
     BusRequest read_request();
     void write_reply(uint32_t reply);
 
@@ -94,6 +107,7 @@ private:
     PIO clock_pio_ = pio1;
     uint bus_sm_ = 0;
     uint clock_sm_ = 0;
+    uint32_t reset_hold_us_ = 10;
 };
 
 #if Z80_BUS_MODE == Z80_BUS_MODE_MANUAL

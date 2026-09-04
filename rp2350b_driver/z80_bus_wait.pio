@@ -11,6 +11,7 @@
 .pio_version 1
 
 .define public Z80_CLK  24
+.define public Z80_RESET 25
 .define public Z80_WAIT 26
 .define public Z80_IORQ 29
 .define public Z80_RD   30
@@ -26,6 +27,12 @@ set y, 7
     wait 0 gpio Z80_CLK [3]
     mov isr, pins
 
+    ; RESET is not part of a bus transaction. In particular, do not lower
+    ; WAIT or block on the M33 while the CPU is being reset.
+    jmp pin not_in_reset
+    jmp no_access
+
+not_in_reset:
     ; A serviced cycle has at least one of IORQ, RD or WR active. A refresh
     ; cycle has all three inactive and must not enter the M33 request path.
     mov osr, isr

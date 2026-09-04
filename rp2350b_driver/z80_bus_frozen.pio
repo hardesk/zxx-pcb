@@ -40,6 +40,7 @@ busy_clock:
 
 .define public SAMPLE_IRQ 0
 .define public BUSY_IRQ   1
+.define public Z80_RESET 25
 .define public Z80_IORQ  29
 .define public Z80_RD    30
 .define public Z80_WR    31
@@ -57,6 +58,12 @@ bus_sample:
     nop [3]
     mov isr, pins
 
+    ; A reset must never leave SAMPLE_IRQ asserted: RESET is synchronous and
+    ; needs a running clock. The configured JMP pin is the RESET input.
+    jmp pin not_in_reset
+    jmp no_access
+
+not_in_reset:
     ; A serviced cycle has at least one of IORQ, RD or WR active. A refresh
     ; cycle has all three inactive and must not enter the M33 request path.
     mov osr, isr
