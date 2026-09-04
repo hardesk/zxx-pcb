@@ -42,7 +42,8 @@ struct ZxDbgPins
     uint8_t data;
     union {
         struct {
-            bool CLK:1, RESET:1, WAIT:1, M1:1, MREQ:1, IORQ:1, RD:1, WR:1, INT:1, NMI:1, BUSREQ:1, BUSACK:1, HALT:1;
+            bool CLK:1, RESET:1, WAIT:1, M1:1, MREQ:1, IORQ:1, RD:1, WR:1,
+                 INT:1, NMI:1, BUSREQ:1, BUSACK:1, HALT:1;
         };
         uint16_t value;
     } pins;
@@ -243,7 +244,7 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         }
 
         if (request.mreq() && request.wr()) {
-            if (addr == 0)
+            if (addr == 3)
                 impl_debug_trap(data);
             impl_on_memwrite(addr, data);
             m_ram[addr] = static_cast<char>(data);
@@ -264,30 +265,20 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         return z80pio::write_reply();
     }
 
-    void prepare_cpm() {
-        m_ram[0] = 0xc3;
-        m_ram[1] = 0x00;
-        m_ram[2] = 0x01;
+    template<class... Bytes>
+    static char* store_bytes(char* p, Bytes... bytes) { ( (*p++ = bytes), ... ); return p; }
 
-        m_ram[6] = 0;
-        m_ram[7] = 0;
-   }
+    void prepare_vectors(uint16_t jump_on_reset_addr = 0x100) {
+        store_bytes( m_ram + 0, 0xc3, jump_on_reset_addr & 0xff, jump_on_reset_addr >> 8);
+        store_bytes( m_ram + 3, 0, 0);
 
-    void prepare_trap(unsigned offset = 0) {
-        auto prep = [](uint8_t*& code, auto... bytes) -> void {
-            (( *code++ = bytes), ... );
-        };
-        uint8_t* start = (uint8_t*)&m_ram[offset];
-        uint8_t* p = start;
-        //prep(p, 0xc3, 0x00, 0x01);                  // jp 0x100
-        prep(p, 0xc3, 0x00, 0x80);                  // jp 0x100
-        prep(p, 0x00, 0x00, 0x00, 0x00, 0x00);
-        assert(p - start == 8);
-        prep(p, 0xed, 0x43, 0x80, 0x00);            // ld (0x0080), bc
-        prep(p, 0xed, 0x53, 0x82, 0x00);            // ld (0x0082), de
-        prep(p, 0x3e, 0x01);                        // ld a, 1
-        prep(p, 0x32, 0x00, 0x00);                  // ld (0), a <-- trigger trap
-        prep(p, 0xc9);                              // ret
+        // for CP/M we store the trap inline without additionl jumps
+        char* p = m_ram + 5;
+        p = store_bytes(p, 0xed, 0x43, 0x80, 0x00);            // ld (0x0080), bc
+        p = store_bytes(p, 0xed, 0x53, 0x82, 0x00);            // ld (0x0082), de
+        p = store_bytes(p, 0x3e, 0x01);                        // ld a, 1
+        p = store_bytes(p, 0x32, 0x03, 0x00);                  // ld (3), a <-- trigger trap
+        p = store_bytes(p, 0xc9);                              // ret
     }
 
     void load(unsigned char const* data, size_t size, uint16_t origin) {
@@ -298,15 +289,14 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
 private:
     void impl_debug_trap(uint8_t trapno) {
         if (trapno == 1) {
-            //uint16_t bc = *(uint16_t*)(m_ram+0x80);
             uint8_t c = *(m_ram+0x80);
             uint16_t de = *(uint16_t*)(m_ram+0x82);
-            uint8_t e = de&0xff;
             if (c == 2) {
+                uint8_t e = de&0xff;
                 printf("%c", e);
             } else if (c==9) {
                 char const* str = (char const*)m_ram + de;
-                while (*str != '$') {
+                while (*str != '$' && *str != 0) {
                     printf("%c", *str++);
                 }
             }
@@ -418,9 +408,8 @@ int main()
     zx.init();
     init_z80_reset_button();
 
-    zx.prepare_cpm();
+    zx.prepare_vectors();
 
-    //zx.prepare_trap();
     //zx.load(copy_str_code, count_of(copy_str_code), 0x100);
     // zx.load(z80_prog, count_of(z80_prog), 0x100);
     zx.load(z80_prog, count_of(z80_prog), 0x8000);
