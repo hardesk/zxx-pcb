@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-
 #include <hardware/pio.h>
 
 #ifndef Z80_BUS_MODE_MANUAL
@@ -35,7 +34,8 @@ enum RawBusBits : uint32_t {
     kRawWr    = 1u << 31,
 };
 
-constexpr uint32_t kReplyDriveData = 1u << 8;
+// Bits 8..15 are loaded directly into the eight data-pin direction controls.
+constexpr uint32_t kReplyDriveData = 0xffu << 8;
 
 struct BusRequest {
     uint32_t raw;
@@ -48,6 +48,7 @@ struct BusRequest {
     bool iorq() const { return !(raw & kRawIorq); }
     bool rd() const { return !(raw & kRawRd); }
     bool wr() const { return !(raw & kRawWr); }
+
 };
 
 constexpr uint32_t read_reply(uint8_t data)

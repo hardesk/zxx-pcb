@@ -13,18 +13,25 @@
 .define public Z80_CLK  24
 .define public Z80_RESET 25
 .define public Z80_WAIT 26
+.define public Z80_MREQ 28
 .define public Z80_IORQ 29
 .define public Z80_RD   30
 .define public Z80_WR   31
 
-; Y=7 is the inactive IORQ/RD/WR value.
-set y, 7
+; The host pre-arms WAIT before enabling this state machine. Tang samples the
+; external clock and then updates its bus outputs, so a reactive WAIT can miss
+; a short cycle -- especially the opcode fetch immediately following a write.
+; RESET ignores WAIT, making it safe to start asserted. A completed reply
+; releases WAIT for the current cycle and re-arms it when the strobes end.
 
 .wrap_target
-    ; Detect and sample the falling clock edge. The delay allows the Z80's
-    ; address and control outputs to propagate through the input synchronisers.
+no_access:
+    ; Sample once per falling edge, after Tang's 30 MHz clock synchroniser and
+    ; both devices' GPIO synchronisers have settled. The old [3] delay sampled
+    ; too early; [15] is about 107 ns at the 150 MHz PIO clock (plus the WAIT
+    ; instruction's own input synchronisation latency).
     wait 1 gpio Z80_CLK
-    wait 0 gpio Z80_CLK [3]
+    wait 0 gpio Z80_CLK [15]
     mov isr, pins
 
     ; RESET is not part of a bus transaction. In particular, do not lower
@@ -33,37 +40,50 @@ set y, 7
     jmp no_access
 
 not_in_reset:
-    ; A serviced cycle has at least one of IORQ, RD or WR active. A refresh
-    ; cycle has all three inactive and must not enter the M33 request path.
+    ; Qualify the cycle as (MREQ or IORQ) AND (RD or WR), with active-low
+    ; signals. Tang's synchronised outputs do not all arrive on the RP2350 in
+    ; the same sample: accepting RD alone can mistake the tail of one cycle
+    ; for the start of the next and return the previous byte.
     mov osr, isr
-    out null, 29
-    out x, 3
-    jmp x!=y access
+    out null, 28
+    out x, 1
+    jmp !x have_request
+    out x, 1
+    jmp !x have_request
+    jmp no_access
+
+have_request:
+    mov osr, isr
+    out null, 30
+    out x, 1
+    jmp !x access
+    out x, 1
+    jmp !x access
     jmp no_access
 
 access:
-    ; Hold the CPU in Tw while the M33 services the request.
-    set pins, 0
-    mov isr, pins
+    ; WAIT is already low, so the CPU remains in Tw while the M33 services the
+    ; request even if this state machine observes the strobe after T2 begins.
+    ; ISR still holds the coherent pin image that triggered this path. Do not
+    ; resample here: Tang's synchronised outputs can change between the test
+    ; and a second MOV, producing a request with already-inactive strobes.
     push block
     pull block
 
-    ; Reply bits 0..7 contain data; bit 8 enables the data-bus drivers.
+    ; Reply bits 0..7 contain data; bits 8..15 are the data-pin directions.
     out pins, 8
-    out x, 1
-    jmp !x no_drive
-    mov pindirs, ~null
-
-no_drive:
+    out pindirs, 8
     set pins, 1
 
-    ; Keep read data driven until the CPU releases the cycle. These waits also
-    ; suppress duplicate requests during T3 and inserted Tw states.
+    ; Keep read data driven until the CPU releases the cycle. Requiring MREQ
+    ; high is essential for memory writes: WR briefly rises in each inserted
+    ; Tw even though the memory cycle itself is still active.
     wait 1 gpio Z80_RD
     wait 1 gpio Z80_WR
     wait 1 gpio Z80_IORQ
+    wait 1 gpio Z80_MREQ
     mov pindirs, null
 
-no_access:
-    set y, 7
+    ; Arm WAIT before looking for the next transaction, then wrap to sample.
+    set pins, 0
 .wrap

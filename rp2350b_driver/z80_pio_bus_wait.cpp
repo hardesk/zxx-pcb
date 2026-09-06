@@ -61,13 +61,15 @@ void WaitStateBusDriver::init(uint32_t z80_hz)
     pio_sm_init(pio_, bus_sm_, bus_offset, &bus_config);
 
     pio_sm_set_pins_with_mask(pio_, clock_sm_, 0, 1u << pCLK);
-    pio_sm_set_pins_with_mask(pio_, bus_sm_, 1u << pWAIT, 1u << pWAIT);
+    // Start active so the first transaction cannot outrun request handling.
+    // RESET ignores WAIT; the PIO releases it after supplying each response.
+    pio_sm_set_pins_with_mask(pio_, bus_sm_, 0, 1u << pWAIT);
 
     pio_sm_set_consecutive_pindirs(pio_, bus_sm_, pD0, 8, false);
     pio_sm_set_consecutive_pindirs(pio_, bus_sm_, pWAIT, 1, true);
     pio_sm_set_consecutive_pindirs(pio_, clock_sm_, pCLK, 1, true);
 
-    // Let the bus state machine reach its first edge wait before CLK starts.
+    // Start the pre-armed bus detector before CLK starts.
     pio_sm_set_enabled(pio_, bus_sm_, true);
     pio_sm_set_enabled(pio_, clock_sm_, true);
 }
