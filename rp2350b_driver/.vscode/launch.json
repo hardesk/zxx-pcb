@@ -32,8 +32,9 @@
 
             "rttConfig": {
                 "enabled": true,
-                "address": "0x20000000",
-                "searchSize": 32768,
+                "address": "auto",
+                "rtt_start_retry": 250,
+                "polling_interval": 20,
                 "searchId": "SEGGER RTT",
                 "decoders": [
                     {

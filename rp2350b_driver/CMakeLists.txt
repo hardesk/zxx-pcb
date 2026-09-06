@@ -19,8 +19,8 @@ project(rp2350_driver)
 # init the sdk
 pico_sdk_init()
 
-set(CMAKE_C_FLAGS_DEBUG "-O3 -g" CACHE STRING "" FORCE)
-set(CMAKE_CXX_FLAGS_DEBUG "-O3 -g" CACHE STRING "" FORCE)
+# set(CMAKE_C_FLAGS_DEBUG "-O3 -g" CACHE STRING "" FORCE)
+# set(CMAKE_CXX_FLAGS_DEBUG "-O3 -g" CACHE STRING "" FORCE)
 
 # Paths for the data build
 # set(DATA_ASM ${CMAKE_CURRENT_SOURCE_DIR}/test.asm)

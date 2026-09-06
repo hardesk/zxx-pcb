@@ -1,8 +1,10 @@
 .DEFAULT_GOAL := help
 
 PROJECT       := rp2350_driver
-BUILD_DIR     ?= derived/drv_rel
-BUILD_TYPE    ?= Release
+BUILD_DIR     ?= derived/drv_dbg
+BUILD_TYPE    ?= Debug
+#BUILD_DIR     ?= derived/drv_rel
+#BUILD_TYPE    ?= Release
 BUS_MODE      ?= WAIT
 
 CMAKE         ?= cmake
