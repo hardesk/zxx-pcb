@@ -88,6 +88,8 @@ struct ZxEnv
 
     uint16_t m_ctrl_prev = (uint16_t)(IO_CTRL>>IO_CTRL_SHIFT);
 
+    uint8_t peek(uint16_t addr) const { return m_ram[addr]; }
+
     // ctrl is shifted to 0 bits
     void react(uint16_t ctrl, uint32_t addr_data) {
         uint32_t ctrlx = m_ctrl_prev ^ ctrl; // =1 which signal changed
@@ -100,7 +102,7 @@ struct ZxEnv
                 uint16_t addr = ADR(addr_data);
                 uint8_t dat = DAT(addr_data);
                 if (addr == 0) {
-                    self().impl_debug_trap(dat);
+                    self().impl_debug_trap(addr, dat);
                 }
                 self().impl_on_memwrite(addr, dat);
                 m_ram[addr] = dat;
@@ -169,7 +171,7 @@ struct ZxEnv
     }
 
 protected:
-    void impl_debug_trap(uint8_t trapno) {}
+    void impl_debug_trap(uint16_t addr, uint8_t trapno) {}
 
     void impl_on_memread(uint16_t addr, bool m1) {}
     void impl_on_memwrite(uint16_t addr, uint8_t dat) {}
@@ -244,8 +246,8 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         }
 
         if (request.mreq() && request.wr()) {
-            if (addr == 3)
-                impl_debug_trap(data);
+            if (addr == 4)
+                impl_debug_trap(addr, data);
             impl_on_memwrite(addr, data);
             m_ram[addr] = static_cast<char>(data);
             return z80pio::write_reply();
@@ -287,8 +289,11 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
     }
 
 private:
-    void impl_debug_trap(uint8_t trapno) {
-        if (trapno == 1) {
+    void impl_debug_trap(uint16_t addr, uint8_t trapno) {
+        if (addr == 4) {
+            printf("MEM4 <- %02x\n", trapno);
+        }
+        if (addr == 3 && trapno == 1) {
             uint8_t c = *(m_ram+0x80);
             uint16_t de = *(uint16_t*)(m_ram+0x82);
             if (c == 2) {
@@ -408,12 +413,11 @@ int main()
     zx.init();
     init_z80_reset_button();
 
-    zx.prepare_vectors();
-
-    //zx.load(copy_str_code, count_of(copy_str_code), 0x100);
-    // zx.load(z80_prog, count_of(z80_prog), 0x100);
-    zx.load(z80_prog, count_of(z80_prog), 0x8000);
-    zx.dump_memory(0, 512, { .width = 16, .ascii = true } );
+    uint16_t prog_org = 0x8000;
+    zx.prepare_vectors(prog_org);
+    zx.load(z80_prog, count_of(z80_prog), prog_org);
+    zx.dump_memory(0, 32, { .width = 16, .ascii = true } );
+    zx.dump_memory(prog_org, 64, { .width = 16, .ascii = true } );
 
     printf("Hello from RP2350 over RTT!\n");
     char buf[128];
@@ -446,19 +450,21 @@ int main()
     while (true) {
         const z80pio::BusRequest request = bus.read_request();
 
-        bool reset_requested = reset_btn.check(&z80_reset_button_pressed);
+        // bool reset_requested = reset_btn.check(&z80_reset_button_pressed);
 
         // Assert RESET before replying so the currently stalled transaction
         // is the last one. Once the reply releases the CPU, the PIO reset
         // guard keeps subsequent samples out of the request FIFO.
-        if (reset_requested)
-            bus.begin_reset();
+        // if (reset_requested)
+        //     bus.begin_reset();
+
+        request.dump(zx.peek(request.address()));
 
         bus.write_reply(zx.service_pio_request(request));
 
-        if (reset_requested) {
-            bus.end_reset();
-            printf("Z80 reset from GPIO40 button\n");
-        }
+        // if (reset_requested) {
+        //     bus.end_reset();
+        //     printf("Z80 reset from GPIO40 button\n");
+        // }
     }
 }

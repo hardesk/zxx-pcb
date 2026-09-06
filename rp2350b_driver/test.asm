@@ -1,8 +1,8 @@
-	org 100h
+	org 08000h
 	jp start
 hello_msg2: ds hello_msg_len
 start:
-	ld hl, 0ffffh 
+	ld hl, 0 
 	ld sp, hl
 
 	ld ix, -4

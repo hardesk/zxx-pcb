@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
+
 #include <hardware/pio.h>
 
 #ifndef Z80_BUS_MODE_MANUAL
@@ -49,6 +51,11 @@ struct BusRequest {
     bool rd() const { return !(raw & kRawRd); }
     bool wr() const { return !(raw & kRawWr); }
 
+    void dump(uint8_t mem) const {
+        printf("busreq %04x %02x m1 %d mreq %d ioreq %d rd %d wr %d mem %02x\n",
+            address(), data(), m1(), mreq(), iorq(), rd(), wr(), mem
+        );
+    }
 };
 
 constexpr uint32_t read_reply(uint8_t data)
