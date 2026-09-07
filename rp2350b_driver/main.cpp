@@ -231,7 +231,9 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
             printf("%c", data);
         }
     }
-    uint8_t handle_io_in(uint16_t addr) { return 0; }
+    uint8_t handle_io_in(uint16_t port) {
+        return (port & 1) ? 0xFF : 0xBF;
+    }
 
     uint8_t handle_interrupt_ack() { return 0xff; }
 
