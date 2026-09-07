@@ -101,9 +101,7 @@ struct ZxEnv
             if (IS_LO(pWR, ctrl) && IS_HI(pWR, ctrlx)) {
                 uint16_t addr = ADR(addr_data);
                 uint8_t dat = DAT(addr_data);
-                if (addr == 0) {
-                    self().impl_debug_trap(addr, dat);
-                }
+                self().impl_debug_trap(addr, dat);
                 self().impl_on_memwrite(addr, dat);
                 m_ram[addr] = dat;
             } else
@@ -193,6 +191,9 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
     
     static constexpr uint64_t kInitialHighPins =
         (1ull << pINT) | (1ull << pWAIT) | (1ull << pNMI) | (1ull << pBUSRQ);
+    static constexpr uint16_t CPM_TRAP_TRIGGER = 0x03;
+    static constexpr uint16_t CPM_TRAP_CODE = 0xffe0; // Note: zexall sets SP to address at (6)
+    static constexpr uint16_t CPM_TRAP_STORE = 0xfff0;
 
     void init() {
         uint64_t pins_oe = 
@@ -248,8 +249,7 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         }
 
         if (request.mreq() && request.wr()) {
-            if (addr == 4)
-                impl_debug_trap(addr, data);
+            impl_debug_trap(addr, data);
             impl_on_memwrite(addr, data);
             m_ram[addr] = static_cast<char>(data);
             return z80pio::write_reply();
@@ -274,15 +274,20 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
 
     void prepare_vectors(uint16_t jump_on_reset_addr = 0x100) {
         store_bytes( m_ram + 0, 0xc3, jump_on_reset_addr & 0xff, jump_on_reset_addr >> 8);
-        store_bytes( m_ram + 3, 0, 0);
+        store_bytes( m_ram + CPM_TRAP_TRIGGER, 0, 0);
 
-        // for CP/M we store the trap inline without additionl jumps
-        char* p = m_ram + 5;
-        p = store_bytes(p, 0xed, 0x43, 0x80, 0x00);            // ld (0x0080), bc
-        p = store_bytes(p, 0xed, 0x53, 0x82, 0x00);            // ld (0x0082), de
-        p = store_bytes(p, 0x3e, 0x01);                        // ld a, 1
-        p = store_bytes(p, 0x32, 0x03, 0x00);                  // ld (3), a <-- trigger trap
-        p = store_bytes(p, 0xc9);                              // ret
+        // hook up to CP/M call 5
+        store_bytes(m_ram + 5, 0xc3, CPM_TRAP_CODE, CPM_TRAP_CODE >> 8);    // jp CPM_TRAP_CODE
+
+        // by default 0x100 jumps to 0x8000
+        store_bytes(m_ram + 0x100, 0xc3, 0x00, 0x80);    // jp 0x8000
+
+        char* p = m_ram + CPM_TRAP_CODE;
+        p = store_bytes(p, 0xed, 0x43, CPM_TRAP_STORE, CPM_TRAP_STORE >> 8);    // ld (CPM_TRAP_STORE+0), bc
+        p = store_bytes(p, 0xed, 0x53, CPM_TRAP_STORE+2, CPM_TRAP_STORE >> 8);  // ld (CPM_TRAP_STORE+2), de
+        p = store_bytes(p, 0x3e, 0x01);                                 // ld a, 1
+        p = store_bytes(p, 0x32, CPM_TRAP_TRIGGER, CPM_TRAP_TRIGGER >> 8);      // ld (CPM_TRAP_TRIGGER), a <-- trigger trap
+        p = store_bytes(p, 0xc9);                                       // ret
     }
 
     void load(unsigned char const* data, size_t size, uint16_t origin) {
@@ -295,9 +300,9 @@ private:
         if (addr == 4) {
             printf("MEM4 <- %02x\n", trapno);
         }
-        if (addr == 3 && trapno == 1) {
-            uint8_t c = *(m_ram+0x80);
-            uint16_t de = *(uint16_t*)(m_ram+0x82);
+        if (addr == CPM_TRAP_TRIGGER && trapno == 1) {
+            uint8_t c = *(m_ram+CPM_TRAP_STORE+0);
+            uint16_t de = *(uint16_t*)(m_ram+CPM_TRAP_STORE+2);
             if (c == 2) {
                 uint8_t e = de&0xff;
                 printf("%c", e);
@@ -415,7 +420,8 @@ int main()
     zx.init();
     init_z80_reset_button();
 
-    uint16_t prog_org = 0x8000;
+    // uint16_t prog_org = 0x8000;
+    uint16_t prog_org = 0x100;
     zx.prepare_vectors(prog_org);
     zx.load(z80_prog, count_of(z80_prog), prog_org);
     zx.dump_memory(0, 32, { .width = 16, .ascii = true } );
