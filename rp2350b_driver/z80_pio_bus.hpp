@@ -73,6 +73,8 @@ constexpr uint32_t write_reply()
 // WAIT/frozen-clock transaction cannot leave the reset without clock edges.
 class ManualBusDriver {
 public:
+    static constexpr char const* id = "manual";
+
     void init(uint32_t z80_hz);
     void begin_reset();
     void end_reset();
@@ -87,6 +89,8 @@ private:
 
 class WaitStateBusDriver {
 public:
+    static constexpr char const* id = "wait state";
+
     void init(uint32_t z80_hz);
     void begin_reset();
     void end_reset();
@@ -103,6 +107,8 @@ private:
 
 class FrozenClockBusDriver {
 public:
+    static constexpr char const* id = "frozen clock";
+
     void init(uint32_t z80_hz);
     void begin_reset();
     void end_reset();

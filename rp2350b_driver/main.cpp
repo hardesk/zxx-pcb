@@ -442,6 +442,8 @@ int main()
     // }
 
     constexpr uint32_t kZ80ClockHz = 3'500'000;
+    // constexpr uint32_t kZ80ClockHz = 100'000;
+    printf("RZ80 speed %dkHz, bus driver '%s'\n", kZ80ClockHz/1000, z80pio::ActiveBusDriver::id);
     z80pio::ActiveBusDriver bus;
     bus.init(kZ80ClockHz);
     bus.reset_cpu();
