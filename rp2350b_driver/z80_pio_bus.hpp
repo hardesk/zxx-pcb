@@ -99,7 +99,8 @@ public:
     void write_reply(uint32_t reply);
 
 private:
-    PIO pio_ = pio0;
+    PIO bus_pio_ = pio0;
+    PIO clock_pio_ = pio1;
     uint clock_sm_ = 0;
     uint bus_sm_ = 0;
     uint32_t reset_hold_us_ = 10;

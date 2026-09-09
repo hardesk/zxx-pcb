@@ -11,6 +11,9 @@
 
 #include "z80_pins.hpp"
 #include "z80_pio_bus.hpp"
+#ifdef Z80_WAIT_CAPTURE
+#include "tests/wait_capture.hpp"
+#endif
 
 using std::size_t;
 
@@ -449,14 +452,20 @@ int main()
     //     printf(" - pin %2d func %d oe %d PAD [[ %s ]]\n", i, gpio_get_function(i), gpio_get_dir(i), fmt_pad(pads_bank0_hw->io[i]));
     // }
 
-    constexpr uint32_t kZ80ClockHz = 3'500'000;
-    // constexpr uint32_t kZ80ClockHz = 100'000;
+    constexpr uint32_t kZ80ClockHz = Z80_CLOCK_HZ;
     printf("RZ80 speed %dkHz, bus driver '%s'\n", kZ80ClockHz/1000, z80pio::ActiveBusDriver::id);
     z80pio::ActiveBusDriver bus;
     bus.init(kZ80ClockHz);
     bus.reset_cpu();
 
     DebButton reset_btn;
+#if Z80_REPLY_DELAY_US > 0
+    uint32_t delay_state = 1;
+#endif
+#ifdef Z80_WAIT_CAPTURE
+    WaitCapture capture;
+    unsigned capture_request = 0;
+#endif
     while (true) {
         const z80pio::BusRequest request = bus.read_request();
 
@@ -468,9 +477,23 @@ int main()
         // if (reset_requested)
         //     bus.begin_reset();
 
-        request.dump(zx.peek(request.address()));
+        // request.dump(zx.peek(request.address()));
 
-        bus.write_reply(zx.service_pio_request(request));
+#if Z80_REPLY_DELAY_US > 0
+        delay_state = delay_state * 1664525u + 1013904223u;
+        busy_wait_us_32(delay_state % (Z80_REPLY_DELAY_US + 1u));
+#endif
+
+        const auto reply = zx.service_pio_request(request);
+#ifdef Z80_WAIT_CAPTURE
+        if (capture_request < 8)
+            capture.start();
+#endif
+        bus.write_reply(reply);
+#ifdef Z80_WAIT_CAPTURE
+        if (capture_request < 8)
+            capture.finish(capture_request++);
+#endif
 
         // if (reset_requested) {
         //     bus.end_reset();

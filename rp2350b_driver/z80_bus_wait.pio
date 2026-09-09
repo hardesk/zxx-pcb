@@ -1,3 +1,61 @@
+; GPIO, request and reply layout
+; ==============================
+;
+; The bus was wired so that a single `mov isr, pins` with IN_BASE=GPIO0 and
+; IN_COUNT=32 captures D, A and all timing-critical control signals without
+; rotation or bit shuffling:
+;
+;   GPIO / request.raw bit
+;
+;    31   30    29    28   27    26     25    24    23       8   7        0
+;   +----+----+-----+-----+----+------+-------+-----+-----------+----------+
+;   | /WR| /RD|/IORQ|/MREQ| /M1| /WAIT|/RESET| CLK | A15 .. A0 | D7 .. D0|
+;   +----+----+-----+-----+----+------+-------+-----+-----------+----------+
+;
+;   Z80 -> RP2350: A15..A0, /M1, /MREQ, /IORQ, /RD and /WR
+;   RP2350 -> Z80: CLK, /RESET and /WAIT
+;   D7..D0:         Z80 drives writes; RP2350 drives reads
+;
+; `push block` therefore sends that exact 32-bit GPIO image to the M33. The
+; C++ RawBusBits masks are simply `1u << gpio_number`, for example:
+;
+;   data       = request.raw & 0x000000ff
+;   address    = (request.raw >> 8) & 0x0000ffff
+;   /MREQ mask = 1u << 28
+;
+; The Z80 control signals are active-low, so a zero masked bit means asserted.
+; Qualification inverts ISR into the right-shifting OSR, discards bits 0..27,
+; and tests the request pair (MREQ/IORQ) before the transfer pair (RD/WR).
+; A nonzero pair means at least one signal is asserted. ISR remains intact.
+;
+; The M33-to-PIO reply word has a different, deliberately compact layout:
+;
+;    31                         16 15                 8 7                  0
+;   +-----------------------------+--------------------+--------------------+
+;   |            unused           | D7..D0 direction   |    D7..D0 value    |
+;   +-----------------------------+--------------------+--------------------+
+;
+; `out pins, 8` consumes reply[7:0]. `out pindirs, 8` then consumes
+; reply[15:8], where 1 drives a data GPIO and 0 leaves it as an input. Thus a
+; memory/IO read reply is `0x0000ff00 | value`; a write reply is zero.
+;
+; State-machine and CPU data flow
+; ===============================
+;
+;                          physical GPIO24
+;   PIO1 clock SM --side-set--> CLK ---------------------------> Z80
+;                              |
+;                              +-- `wait gpio Z80_CLK` --> PIO0 bus SM
+;
+;   Z80 D/A/control --> GPIO0..31 --> ISR --> RX FIFO --> M33 read_request()
+;   Z80 /WAIT       <-- GPIO26 <-- SET pins <------------- PIO0 bus SM
+;   Z80 D7..D0      <-- GPIO0..7 <-- OSR/pindirs <-- TX FIFO <-- M33 reply
+;
+; PIO0 and PIO1 do not exchange IRQs or FIFO words in this WAIT backend.
+; PIO1 only generates CLK; PIO0 observes that physical pin just like the Z80
+; does. They use different PIO blocks because this bus program occupies all 32
+; words of PIO0 instruction memory, while the clock program needs two words.
+
 .program z80_wait_clock
 .side_set 1
 
@@ -18,72 +76,64 @@
 .define public Z80_RD   30
 .define public Z80_WR   31
 
-; The host pre-arms WAIT before enabling this state machine. Tang samples the
-; external clock and then updates its bus outputs, so a reactive WAIT can miss
-; a short cycle -- especially the opcode fetch immediately following a write.
-; RESET ignores WAIT, making it safe to start asserted. A completed reply
-; releases WAIT for the current cycle and re-arms it when the strobes end.
+; WAIT is pre-armed by the host. The first qualified sample only arms Y;
+; accept a request after another complete clock with WAIT still asserted.
+; This keeps a sample at the start of T1 (or a skewed bus transition) out of
+; the FIFO. The second sample supplies BOTH the qualified controls and payload.
+; Y is cleared by idle/reset and after every reply, never by host latency.
+idle:
+    set y, 0
 
 .wrap_target
-no_access:
-    ; Sample once per falling edge, after Tang's 30 MHz clock synchroniser and
-    ; both devices' GPIO synchronisers have settled. The old [3] delay sampled
-    ; too early; [15] is about 107 ns at the 150 MHz PIO clock (plus the WAIT
-    ; instruction's own input synchronisation latency).
+sample_bus:
     wait 1 gpio Z80_CLK
     wait 0 gpio Z80_CLK [15]
     mov isr, pins
+    jmp pin qualify
+    jmp idle
 
-    ; RESET is not part of a bus transaction. In particular, do not lower
-    ; WAIT or block on the M33 while the CPU is being reset.
-    jmp pin not_in_reset
-    jmp no_access
-
-not_in_reset:
-    ; Qualify the cycle as (MREQ or IORQ) AND (RD or WR), with active-low
-    ; signals. Tang's synchronised outputs do not all arrive on the RP2350 in
-    ; the same sample: accepting RD alone can mistake the tail of one cycle
-    ; for the start of the next and return the previous byte.
-    mov osr, isr
+qualify:
+    ; Invert active-low controls. Both request and transfer groups must be
+    ; nonzero: (MREQ || IORQ) && (RD || WR). Consume GPIO28..29 before 30..31.
+    mov osr, ~isr
     out null, 28
-    out x, 1
-    jmp !x have_request
-    out x, 1
-    jmp !x have_request
-    jmp no_access
+    out x, 2
+    jmp !x idle
+    out x, 2
+    jmp !x idle
+    jmp !y settle
 
-have_request:
-    mov osr, isr
-    out null, 30
-    out x, 1
-    jmp !x access
-    out x, 1
-    jmp !x access
-    jmp no_access
-
-access:
-    ; WAIT is already low, so the CPU remains in Tw while the M33 services the
-    ; request even if this state machine observes the strobe after T2 begins.
-    ; ISR still holds the coherent pin image that triggered this path. Do not
-    ; resample here: Tang's synchronised outputs can change between the test
-    ; and a second MOV, producing a request with already-inactive strobes.
     push block
     pull block
-
-    ; Reply bits 0..7 contain data; bits 8..15 are the data-pin directions.
     out pins, 8
-    out pindirs, 8
+    ; Allow data/OE to settle before WAIT can permit the FPGA to latch data.
+    out pindirs, 8 [15]
+    ; WAIT feeds Tang's core directly, unlike its synchronized CLK. Keep its
+    ; transition away from the core's clock enable: release after a settled
+    ; falling edge, with data already stable, regardless of M33 reply latency.
+    wait 1 gpio Z80_CLK
+    wait 0 gpio Z80_CLK [15]
     set pins, 1
 
-    ; Keep read data driven until the CPU releases the cycle. Requiring MREQ
-    ; high is essential for memory writes: WR briefly rises in each inserted
-    ; Tw even though the memory cycle itself is still active.
-    wait 1 gpio Z80_RD
-    wait 1 gpio Z80_WR
-    wait 1 gpio Z80_IORQ
-    wait 1 gpio Z80_MREQ
+    ; Look continuously: the idle gap before/after refresh can be only half
+    ; a clock, so polling once per clock can miss it and leave WAIT released
+    ; into the NEXT transaction. Require all four strobes inactive in two
+    ; consecutive coherent samples before releasing data and re-arming WAIT.
+    ; Y is still 1 from qualification, and any active sample resets it to 1.
+cycle_end:
+    mov osr, ~pins
+    out null, 28
+    out x, 4
+    jmp !x inactive
+    set y, 1
+    jmp cycle_end
+inactive:
+    jmp y-- cycle_end
     mov pindirs, null
-
-    ; Arm WAIT before looking for the next transaction, then wrap to sample.
     set pins, 0
+    jmp idle
+
+settle:
+    set y, 1
+    jmp sample_bus
 .wrap

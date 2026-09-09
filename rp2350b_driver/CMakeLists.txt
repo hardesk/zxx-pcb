@@ -105,6 +105,12 @@ target_compile_definitions(rp2350_driver
     PUBLIC DATA_ASM_FILE="${DATA_FILENAME_STEM}.h"
     PUBLIC DATA_ASM_LABEL=${DATA_FILENAME_STEM}_prog
 )
+set(Z80_CLOCK_HZ "3500000" CACHE STRING "External Z80 clock frequency")
+set(Z80_REPLY_DELAY_US "0" CACHE STRING "Stress test: maximum varying delay before each bus reply")
+target_compile_definitions(rp2350_driver PRIVATE
+    Z80_CLOCK_HZ=${Z80_CLOCK_HZ}
+    Z80_REPLY_DELAY_US=${Z80_REPLY_DELAY_US}
+)
 
 target_include_directories(rp2350_driver PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
@@ -120,4 +126,9 @@ target_link_libraries(rp2350_driver
     hardware_clocks
     hardware_pio
 )
+option(Z80_WAIT_CAPTURE "Capture the first eight replies with PIO2/DMA" OFF)
+if (Z80_WAIT_CAPTURE)
+    target_compile_definitions(rp2350_driver PRIVATE Z80_WAIT_CAPTURE=1)
+    target_link_libraries(rp2350_driver hardware_dma)
+endif()
 pico_add_extra_outputs(rp2350_driver)

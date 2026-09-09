@@ -32,7 +32,7 @@ CMAKE_CONFIG_ARGS += -DPICO_SDK_PATH=$(PICO_SDK_PATH)
 endif
 
 .PHONY: help configure build artifacts elf bin hex flash flash-bin program \
-	openocd server monitor rtt
+	openocd server monitor rtt test-wait-pio
 
 help:
 	@printf '%s\n' \
@@ -42,6 +42,7 @@ help:
 		'make openocd               Run OpenOCD + RTT server in this terminal' \
 		'make monitor               Connect to the OpenOCD command monitor' \
 		'make rtt                   Connect to RTT channel 0' \
+		'make test-wait-pio         Run the PIO handshake model regression' \
 		'' \
 		'Useful overrides:' \
 		'  BUS_MODE=MANUAL|WAIT|FROZEN  BUILD_TYPE=Release|Debug' \
@@ -88,3 +89,6 @@ monitor:
 # OpenOCD's RTT server is raw TCP, so netcat is preferable to Telnet here.
 rtt:
 	$(NC) "$(OPENOCD_HOST)" "$(RTT_PORT)"
+
+test-wait-pio:
+	python3 tests/test_wait_pio.py
