@@ -1,4 +1,7 @@
-# Board results — 2026-09-08
+# Historical board results — 2026-09-08
+
+These results apply to the old `z80_bus_wait.pio`, not the active asynchronous
+`z80_pio_bus_wait-manual.pio` driver. They do not validate the new driver.
 
 Tests used the attached RP2350/CMSIS-DAP board, the existing FPGA configuration,
 150 MHz RP2350 system clock, WAIT backend, and blocking `request.dump()` before
