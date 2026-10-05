@@ -57,6 +57,7 @@ BusRequest ManualBusDriver::read_request()
 {
     while (true) {
         gpio_put(pCLK, next_clock_high_);
+        // busy_wait_at_least_cycles(30);
         next_clock_high_ = !next_clock_high_;
 
         const uint32_t raw = gpio_get_all();

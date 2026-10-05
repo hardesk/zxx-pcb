@@ -5,6 +5,17 @@ start:
 	ld hl, 0 
 	ld sp, hl
 
+	push hl
+	push hl
+	ld ix, 0
+	add ix, sp
+
+	ld hl, -4
+	add hl, sp
+	ld sp, hl
+	push hl
+	pop ix
+
 	ld ix, -4
 	add ix, sp
 	ld sp, ix

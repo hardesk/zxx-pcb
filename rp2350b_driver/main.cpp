@@ -293,6 +293,18 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         p = store_bytes(p, 0xc9);                                       // ret
     }
 
+    template<class... Bytes>
+    void fill(uint16_t addr, uint16_t count, Bytes... bytes) {
+        constexpr unsigned chunk_size = sizeof...(bytes);
+        uint8_t templ[] = { static_cast<uint8_t>(bytes)... };
+        unsigned written = 0;
+        do {
+            char* p = m_ram + uint16_t(addr + written);
+            unsigned i = written % sizeof(templ);
+            *p = templ[i];
+        } while(++written, --count);
+    }
+
     void load(unsigned char const* data, size_t size, uint16_t origin) {
         unsigned char* dest = (unsigned char*)m_ram + origin;
         memcpy(dest, data, size);
@@ -426,6 +438,7 @@ int main()
     uint16_t prog_org = 0x8000;
     zx.prepare_vectors(prog_org);
     zx.load(z80_prog, count_of(z80_prog), prog_org);
+    // zx.fill(0, 0, 0x7e);
     zx.dump_memory(0, 32, { .width = 16, .ascii = true } );
     zx.dump_memory(prog_org, 64, { .width = 16, .ascii = true } );
 
