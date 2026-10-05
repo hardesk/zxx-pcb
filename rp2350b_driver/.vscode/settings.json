@@ -15,7 +15,7 @@
         "ios": "cpp"
     },
     "terminal.integrated.scrollback": 100000,
-    "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/derived/drv_dbg/compile_commands.json",
     "dotnet.defaultSolution": "disable",
     "cortex-debug.gdbPath": "/Applications/ArmGNUToolchain/13.2.Rel1/arm-none-eabi/bin/arm-none-eabi-gdb",
     "cortex-debug.openocdPath": "/opt/openocd-master/bin/openocd",

@@ -7,8 +7,9 @@
             "request": "launch",
             "servertype": "openocd",
             "cwd": "${workspaceFolder}",
-            "executable": "${workspaceFolder}/derived/drv_rel/rp2350_driver.elf",
+            "executable": "${workspaceFolder}/derived/drv_dbg/rp2350_driver.elf",
             "runToEntryPoint": "main",
+            "preLaunchTask": "Build asynchronous WAIT driver",
             "openOCDLaunchCommands": [
                 "gdb port 50000",
                 "tcl port 50001",
@@ -69,16 +70,16 @@
             },
             "sjasmplus": [
                 {
-                    "path": "derived/drv_dbg/zexall.sld"
+                    "path": "derived/drv_dbg/test.sld"
                 }
             ],
             "loadObjs": [
-                { "path": "derived/drv_dbg/zexall.bin", "start": "0x100" }
+                { "path": "derived/drv_dbg/test.bin", "start": "0x8000" }
             ],
             "startAutomatically": false,
             "commandsAfterLaunch": [],
             "rootFolder": "${workspaceFolder}",
-            "execAddress": "0x100",
+            "execAddress": "0x8000",
             //"topOfStack": "stack_top",
             //"load": "z80-opcode-tester.sna",
             "tmpDir": ".zxtmp"
