@@ -1,3 +1,5 @@
+; Historical pre-armed WAIT implementation; not selected by the current build.
+; Active WAIT backend: z80_bus_async.pio.
 ; GPIO, request and reply layout
 ; ==============================
 ;
@@ -9,7 +11,7 @@
 ;
 ;    31   30    29    28   27    26     25    24    23       8   7        0
 ;   +----+----+-----+-----+----+------+-------+-----+-----------+----------+
-;   | /WR| /RD|/IORQ|/MREQ| /M1| /WAIT|/RESET| CLK | A15 .. A0 | D7 .. D0|
+;   | /WR| /RD|/MREQ|/IORQ| /M1| /WAIT|/RESET| CLK | A15 .. A0 | D7 .. D0|
 ;   +----+----+-----+-----+----+------+-------+-----+-----------+----------+
 ;
 ;   Z80 -> RP2350: A15..A0, /M1, /MREQ, /IORQ, /RD and /WR
@@ -21,7 +23,7 @@
 ;
 ;   data       = request.raw & 0x000000ff
 ;   address    = (request.raw >> 8) & 0x0000ffff
-;   /MREQ mask = 1u << 28
+;   /MREQ mask = 1u << 29
 ;
 ; The Z80 control signals are active-low, so a zero masked bit means asserted.
 ; Qualification inverts ISR into the right-shifting OSR, discards bits 0..27,
@@ -56,7 +58,7 @@
 ; does. They use different PIO blocks because this bus program occupies all 32
 ; words of PIO0 instruction memory, while the clock program needs two words.
 
-.program z80_wait_clock
+.program z80_async_clock
 .side_set 1
 
 .wrap_target
@@ -65,14 +67,14 @@
 .wrap
 
 
-.program z80_wait_bus
+.program z80_async_bus
 .pio_version 1
 
 .define public Z80_CLK  24
 .define public Z80_RESET 25
 .define public Z80_WAIT 26
-.define public Z80_MREQ 28
-.define public Z80_IORQ 29
+.define public Z80_IORQ 28
+.define public Z80_MREQ 29
 .define public Z80_RD   30
 .define public Z80_WR   31
 
@@ -94,7 +96,7 @@ sample_bus:
 
 qualify:
     ; Invert active-low controls. Both request and transfer groups must be
-    ; nonzero: (MREQ || IORQ) && (RD || WR). Consume GPIO28..29 before 30..31.
+    ; nonzero: (IORQ || MREQ) && (RD || WR). Consume GPIO28..29 before 30..31.
     mov osr, ~isr
     out null, 28
     out x, 2

@@ -1,0 +1,104 @@
+; Asynchronous Z80 bus: WAIT starts and idles high.
+; Guard asserts on MREQ/IORQ independently of detector/service and CLK.
+; Guard IN_BASE=IORQ: low four bits are IORQ, MREQ, RD, WR.
+; Detector RX carries accepted snapshots; service TX carries replies.
+; DATA_READY is PIO1 IRQ3; debug uses IRQ6/7.
+.program z80_async_clock
+.side_set 1
+.wrap_target
+    nop side 1
+    nop side 0
+.wrap
+
+.program z80_async_debug
+.pio_version 1
+.side_set 1
+.wrap_target
+    ; Snapshot timing diagnostic: GPIO39 rises after detector acceptance
+    ; (IRQ6), and falls after reply data/output-enable setup (IRQ7).
+    ; These are delayed markers, not exact snapshot timestamps.
+    ; Include IRQ/helper and GPIO input synchronization when decoding edges.
+    wait 1 irq 6 side 0
+    wait 1 irq 7 side 1
+.wrap
+
+.program z80_async_guard
+.pio_version 1
+.wrap_target
+    set pins, 1 ; pins for set is configured to be WAIT
+scan_request:
+    mov osr, ~pins ; base is pIORQ so not additional shifting is required to test IORD/MREQ/RD/WR
+    out x, 2
+    jmp !x scan_request
+    set pins, 0
+pending_reply:
+    mov x, status ; status is non-zero if IRQ is set for this SM
+    jmp !x check_request ; still processing busreq (do we really need this?)
+    irq clear 3 ; deassert IRQ signal and...
+    set pins, 1 ; ...deassert WAIT
+wait_end:
+    mov osr, ~pins
+    out x, 4
+    jmp x-- wait_end
+    jmp scan_request
+check_request:
+    mov osr, ~pins
+    out x, 4
+    jmp x-- pending_reply
+    ; Refresh ended without DATA_READY. Return to high idle.
+.wrap
+
+.program z80_async_detector
+.pio_version 1
+.wrap_target
+scan:
+    ; JMP pin is /RESET. Ignore all requests while reset is asserted.
+    jmp pin sample
+    jmp scan
+sample:
+    mov isr, pins
+    mov osr, ~isr
+    out null, 28
+    out x, 2 ; IORQ|MREQ
+    jmp !x scan
+    out x, 2 ; RD|WR
+    jmp x-- request
+    ; No RD/WR: only a coherent M1+IORQ snapshot is an acknowledgement.
+    mov osr, ~isr
+    out null, 27
+    out x, 2 ; M1|IORQ
+    set y, 3
+    jmp x!=y scan
+request:
+    ; 7 sysclks after the accepted MOV ISR for RD/WR, 12 for INTACK.
+    ; Detector+service use 30 words. Publish this accepted ISR unchanged.
+    irq next 6 ; debug pulse start
+    push block ; accepted detector snapshot to the M33
+    irq 4 ; Signal to start the bus request on the CPU
+    wait 1 irq 5 ; Wait until the bus request finishes
+.wrap
+
+.program z80_async_bus
+.pio_version 1
+.wrap_target
+    wait 1 irq 4 ; Wait for a signal from busreq detector
+    ; Request is already in detector RX; this SM consumes only the reply.
+    pull block
+    out pins, 8
+    out pindirs, 8 [4]
+    ; The WAIT guard may release WAIT only after these outputs have settled.
+    irq next 3
+    ; Marker follows reply data/OE setup and DATA_READY.
+    irq next 7
+end_cycle:
+    ; Keep ownership while ANY request/transfer strobe remains asserted.
+    ; This also covers IORQ-only interrupt acknowledgement, WR pulses during
+    ; a held MREQ, and RD outliving a short MREQ deassertion.
+    mov osr, ~pins
+    out null, 28
+    out x, 4 ; IORQ|MREQ|RD|WR
+    jmp x-- end_cycle
+    ; Snapshot/poll latency provides hold time beyond the observed bus end.
+    mov pindirs, null
+    irq 5 ; Make detector know that bus request has finished
+.wrap

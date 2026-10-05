@@ -45,7 +45,7 @@ struct ZxDbgPins
     uint8_t data;
     union {
         struct {
-            bool CLK:1, RESET:1, WAIT:1, M1:1, MREQ:1, IORQ:1, RD:1, WR:1,
+            bool CLK:1, RESET:1, WAIT:1, M1:1, IORQ:1, MREQ:1, RD:1, WR:1,
                  INT:1, NMI:1, BUSREQ:1, BUSACK:1, HALT:1;
         };
         uint16_t value;
@@ -423,8 +423,7 @@ int main()
     zx.init();
     init_z80_reset_button();
 
-    // uint16_t prog_org = 0x8000;
-    uint16_t prog_org = 0x100;
+    uint16_t prog_org = 0x8000;
     zx.prepare_vectors(prog_org);
     zx.load(z80_prog, count_of(z80_prog), prog_org);
     zx.dump_memory(0, 32, { .width = 16, .ascii = true } );
@@ -463,7 +462,8 @@ int main()
     uint32_t delay_state = 1;
 #endif
 #ifdef Z80_WAIT_CAPTURE
-    WaitCapture capture;
+    // Capture buffer is 4 KiB: keep it off the core's small stack.
+    static WaitCapture capture;
     unsigned capture_request = 0;
 #endif
     while (true) {

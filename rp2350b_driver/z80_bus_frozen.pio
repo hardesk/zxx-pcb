@@ -41,13 +41,10 @@ busy_clock:
 .define public SAMPLE_IRQ 0
 .define public BUSY_IRQ   1
 .define public Z80_RESET 25
-.define public Z80_IORQ  29
+.define public Z80_IORQ  28
 .define public Z80_RD    30
 .define public Z80_WR    31
 .mov_status irq set SAMPLE_IRQ
-
-; Inactive IORQ/RD/WR is binary 111.
-set y, 7
 
 .wrap_target
 bus_sample:
@@ -66,10 +63,13 @@ bus_sample:
 not_in_reset:
     ; A serviced cycle has at least one of IORQ, RD or WR active. A refresh
     ; cycle has all three inactive and must not enter the M33 request path.
-    mov osr, isr
-    out null, 29
-    out x, 3
-    jmp x!=y access
+    mov osr, ~isr
+    out null, 28
+    out x, 1
+    jmp x-- access
+    out null, 1
+    out x, 2
+    jmp x-- access
 
 no_access:
     irq clear SAMPLE_IRQ

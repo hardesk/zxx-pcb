@@ -33,8 +33,8 @@ enum Pins : unsigned {
     pRESET = 25, // Z80 input
     pWAIT  = 26, // Z80 input
     pM1    = 27, // Z80 output
-    pMREQ  = 28, // Z80 output
-    pIORQ  = 29, // Z80 output
+    pIORQ  = 28, // Z80 output
+    pMREQ  = 29, // Z80 output
     pRD    = 30, // Z80 output
     pWR    = 31, // Z80 output
 
@@ -49,3 +49,4 @@ enum Pins : unsigned {
 
 constexpr uint32_t kZ80DataMask = 0x0000'00ffu;
 constexpr uint32_t kZ80AddressMask = 0x00ff'ff00u;
+constexpr unsigned pPIO_DEBUG = 39;

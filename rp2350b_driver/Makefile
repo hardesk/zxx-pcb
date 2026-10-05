@@ -3,11 +3,13 @@
 PROJECT       := rp2350_driver
 BUILD_DIR     ?= derived/drv_dbg
 BUILD_TYPE    ?= Debug
-#BUILD_DIR     ?= derived/drv_rel
-#BUILD_TYPE    ?= Release
-BUS_MODE      ?= WAIT
+BUS_MODE      ?= ASYNC
+# The external CPU clock is independent of the bus service backend.
+# The early-request async guard is qualified at 5 MHz on the attached FPGA.
+Z80_CLOCK_HZ  ?= 5000000
 
 CMAKE         ?= cmake
+PYTHON        ?= python3
 OPENOCD       ?= /opt/openocd-master/bin/openocd
 TELNET        ?= telnet
 NC            ?= nc
@@ -27,12 +29,14 @@ CMAKE_CONFIG_ARGS := \
 	-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
 	-DZ80_BUS_MODE=$(BUS_MODE)
 
+CMAKE_CONFIG_ARGS += -DZ80_CLOCK_HZ=$(Z80_CLOCK_HZ)
+
 ifneq ($(strip $(PICO_SDK_PATH)),)
 CMAKE_CONFIG_ARGS += -DPICO_SDK_PATH=$(PICO_SDK_PATH)
 endif
 
-.PHONY: help configure build artifacts elf bin hex flash flash-bin program \
-	openocd server monitor rtt test-wait-pio
+.PHONY: help configure build artifacts elf bin hex flash flash-bin \
+	openocd monitor rtt test-async-pio
 
 help:
 	@printf '%s\n' \
@@ -42,10 +46,11 @@ help:
 		'make openocd               Run OpenOCD + RTT server in this terminal' \
 		'make monitor               Connect to the OpenOCD command monitor' \
 		'make rtt                   Connect to RTT channel 0' \
-		'make test-wait-pio         Run the PIO handshake model regression' \
+		'make test-async-pio         Test the active asynchronous WAIT driver' \
 		'' \
 		'Useful overrides:' \
-		'  BUS_MODE=MANUAL|WAIT|FROZEN  BUILD_TYPE=Release|Debug' \
+		'  BUS_MODE=MANUAL|ASYNC|FROZEN  BUILD_TYPE=Release|Debug' \
+		'  Z80_CLOCK_HZ=5000000 (all modes; overrides cached clock)' \
 		'  BUILD_DIR=...  PICO_SDK_PATH=...  OPENOCD=...'
 
 configure:
@@ -72,16 +77,12 @@ flash: build
 flash-bin: build
 	$(OPENOCD) -c "set BIN {$(abspath $(BIN))}" -f "$(FLASH_CFG)"
 
-program: flash
-
 # Keep this process in the foreground. Run monitor and rtt from other terminals.
 openocd:
 	$(OPENOCD) \
 		-f interface/cmsis-dap.cfg \
 		-f target/rp2350.cfg \
 		-f "$(RTT_CFG)"
-
-server: openocd
 
 monitor:
 	$(TELNET) "$(OPENOCD_HOST)" "$(MONITOR_PORT)"
@@ -90,5 +91,6 @@ monitor:
 rtt:
 	$(NC) "$(OPENOCD_HOST)" "$(RTT_PORT)"
 
-test-wait-pio:
-	python3 tests/test_wait_pio.py
+test-async-pio:
+	$(PYTHON) tests/test_wait_manual_pio.py
+	$(PYTHON) tests/test_high_wait_pio.py

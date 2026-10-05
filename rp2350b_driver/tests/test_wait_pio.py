@@ -10,7 +10,7 @@ from pathlib import Path
 
 MASK = 0xffffffff
 CLK, RESET, WAIT = 24, 25, 26
-MREQ, IORQ, RD, WR = 28, 29, 30, 31
+IORQ, MREQ, RD, WR = 28, 29, 30, 31
 
 
 class Machine:

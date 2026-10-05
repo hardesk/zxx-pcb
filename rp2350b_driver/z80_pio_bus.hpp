@@ -9,8 +9,8 @@
 #define Z80_BUS_MODE_MANUAL 0
 #endif
 
-#ifndef Z80_BUS_MODE_WAIT
-#define Z80_BUS_MODE_WAIT 1
+#ifndef Z80_BUS_MODE_ASYNC
+#define Z80_BUS_MODE_ASYNC 1
 #endif
 
 #ifndef Z80_BUS_MODE_FROZEN
@@ -18,7 +18,7 @@
 #endif
 
 #ifndef Z80_BUS_MODE
-#define Z80_BUS_MODE Z80_BUS_MODE_WAIT
+#define Z80_BUS_MODE Z80_BUS_MODE_ASYNC
 #endif
 
 namespace z80pio {
@@ -30,8 +30,8 @@ enum RawBusBits : uint32_t {
     kRawReset = 1u << 25,
     kRawWait  = 1u << 26,
     kRawM1    = 1u << 27,
-    kRawMreq  = 1u << 28,
-    kRawIorq  = 1u << 29,
+    kRawIorq  = 1u << 28,
+    kRawMreq  = 1u << 29,
     kRawRd    = 1u << 30,
     kRawWr    = 1u << 31,
 };
@@ -87,9 +87,9 @@ private:
     bool next_clock_high_ = true;
 };
 
-class WaitStateBusDriver {
+class AsyncBusDriver {
 public:
-    static constexpr char const* id = "wait state";
+    static constexpr char const* id = "async WAIT (detector/service)";
 
     void init(uint32_t z80_hz);
     void begin_reset();
@@ -102,6 +102,9 @@ private:
     PIO bus_pio_ = pio0;
     PIO clock_pio_ = pio1;
     uint clock_sm_ = 0;
+    uint wait_sm_ = 0;
+    uint debug_sm_ = 0;
+    uint detector_sm_ = 0;
     uint bus_sm_ = 0;
     uint32_t reset_hold_us_ = 10;
 };
@@ -127,12 +130,12 @@ private:
 
 #if Z80_BUS_MODE == Z80_BUS_MODE_MANUAL
 using ActiveBusDriver = ManualBusDriver;
-#elif Z80_BUS_MODE == Z80_BUS_MODE_WAIT
-using ActiveBusDriver = WaitStateBusDriver;
+#elif Z80_BUS_MODE == Z80_BUS_MODE_ASYNC
+using ActiveBusDriver = AsyncBusDriver;
 #elif Z80_BUS_MODE == Z80_BUS_MODE_FROZEN
 using ActiveBusDriver = FrozenClockBusDriver;
 #else
-#error "Z80_BUS_MODE must be MANUAL, WAIT or FROZEN"
+#error "Z80_BUS_MODE must be MANUAL, ASYNC or FROZEN"
 #endif
 
 } // namespace z80pio
