@@ -13,8 +13,9 @@ class WaitCapture {
     int dma;
 public:
     WaitCapture() {
+        pio_set_gpio_base(pio2, 0);
         sm = pio_claim_unused_sm(pio2, true);
-        const uint16_t instructions[] = {pio_encode_in(pio_pins, 32)};
+        const uint16_t instructions[] = {static_cast<uint16_t>(pio_encode_in(pio_pins, 32))};
         const pio_program program = {instructions, 1, -1, 1, 0};
         const auto offset = pio_add_program(pio2, &program);
         auto config = pio_get_default_sm_config();
