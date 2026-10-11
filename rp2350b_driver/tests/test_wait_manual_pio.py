@@ -96,15 +96,18 @@ class SM:
             else:
                 setattr(self, dest, value)
         elif op == 'irq':
-            if a[0] == 'clear':
-                bus.flags.discard((self.block, int(a[1])))
-            elif len(a) == 1:
-                target, flag = self.block, a[0]
+            # RP2350 allows NEXT/PREV before SET/CLEAR, including remote clear.
+            target = self.block
+            if a[0] in ('next', 'prev'):
+                target += -1 if a.pop(0) == 'prev' else 1
+            clear = a[0] == 'clear'
+            if a[0] in ('clear', 'set'):
+                a.pop(0)
+            key = (target, int(a[0]))
+            if clear:
+                bus.flags.discard(key)
             else:
-                direction, flag = a
-                target = self.block + (-1 if direction == 'prev' else 1)
-            if a[0] != 'clear':
-                bus.flags.add((target, int(flag)))
+                bus.flags.add(key)
         elif op == 'wait':
             polarity, source, index = int(a[0]), a[1], int(a[2])
             if source == 'irq':

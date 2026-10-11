@@ -51,6 +51,8 @@ void AsyncBusDriver::init(uint32_t z80_hz)
     wait_sm_ = pio_claim_unused_sm(clock_pio_, true);
     debug_sm_ = pio_claim_unused_sm(clock_pio_, true);
     detector_sm_ = pio_claim_unused_sm(bus_pio_, true);
+    fifo_access_ = {&bus_pio_->fstat, &bus_pio_->rxf[detector_sm_],
+                   &bus_pio_->txf[bus_sm_], 1u << (PIO_FSTAT_RXEMPTY_LSB + detector_sm_)};
 
     const uint bus_offset = pio_add_program(bus_pio_, &z80_async_bus_program);
     const uint clock_offset = pio_add_program(clock_pio_, &z80_async_clock_program);
@@ -140,16 +142,6 @@ void AsyncBusDriver::end_reset()
     while (gpio_get(pCLK))
         tight_loop_contents();
     gpio_put(pRESET, true);
-}
-
-BusRequest AsyncBusDriver::read_request()
-{
-    return {pio_sm_get_blocking(bus_pio_, detector_sm_)};
-}
-
-void AsyncBusDriver::write_reply(uint32_t reply)
-{
-    pio_sm_put_blocking(bus_pio_, bus_sm_, reply);
 }
 
 } // namespace z80pio

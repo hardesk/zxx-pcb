@@ -75,6 +75,55 @@ class HighWaitTest(unittest.TestCase):
                     self.assertEqual(len(bus.requests), index + 1)
                     self.assertFalse(bus.flags)
 
+    def test_reset_aborts_pending_reply_without_releasing_next_fetch(self):
+        # RESET makes the FPGA drop its strobes while a reply is outstanding.
+        # The old reply still must be drained, but its DATA_READY cannot belong
+        # to the first post-reset read. Cover read/write/INTACK and every guard
+        # scan phase, with replies before, during and long after bus abortion.
+        idle = 0xfa000000
+        reset_idle = idle & ~(1 << 25)
+        fetch = idle & ~((1 << M1) | (1 << MREQ) | (1 << RD))
+        for request, transfer in ((MREQ, RD), (MREQ, WR), (IORQ, WR), (IORQ, M1)):
+            for phase in range(16):
+                for reply_at in (0, 1, 4, 8, 16, 40, 100):
+                    with self.subTest(request=request, transfer=transfer,
+                                      phase=phase, reply_at=reply_at):
+                        bus = self.bus()
+                        for _ in range(phase):
+                            bus.step(idle)
+                        old = idle & ~((1 << request) | (1 << transfer))
+                        for _ in range(60):
+                            bus.step(old)
+                        self.assertEqual(len(bus.requests), 1)
+                        self.assertEqual(bus.wait, 0)
+                        # A software reply may arrive after RESET aborted its
+                        # physical transfer. The driver drains it during reset.
+                        for tick in range(200):
+                            if tick == reply_at:
+                                bus.reply = 0 if transfer == WR else 0xff77
+                            bus.step(reset_idle)
+                        self.assertEqual(bus.oe, 0)
+                        self.assertNotIn((1, 3), bus.flags, 'aborted reply left DATA_READY set')
+                        for _ in range(phase + 20):
+                            bus.step(idle)
+                        for tick in range(300):
+                            bus.step(fetch)
+                            if tick >= 8:
+                                self.assertEqual(bus.wait, 0, 'old reply released the new fetch')
+                        self.assertEqual(len(bus.requests), 2)
+                        bus.reply = 0xffc3
+                        for _ in range(100):
+                            bus.step(fetch)
+                            if bus.wait:
+                                break
+                        self.assertEqual(bus.wait, 1)
+                        self.assertEqual(bus.data, 0xc3)
+                        self.assertEqual(bus.oe, 0xff)
+                        for _ in range(50):
+                            bus.step(idle)
+                        self.assertEqual(bus.oe, 0)
+                        self.assertFalse(bus.flags)
+
     @unittest.skipUnless(os.environ.get('HIGH_WAIT_IN_BASE', '28') == '28',
                          'Transfer-strobe retention is added in the shorter guard')
     def test_request_gap_with_transfer_still_active(self):

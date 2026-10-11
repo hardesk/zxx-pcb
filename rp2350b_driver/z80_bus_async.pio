@@ -71,7 +71,7 @@ sample:
     jmp x!=y scan
 request:
     ; 7 sysclks after the accepted MOV ISR for RD/WR, 12 for INTACK.
-    ; Detector+service use 30 words. Publish this accepted ISR unchanged.
+    ; Detector+service use 31 words. Publish this accepted ISR unchanged.
     irq next 6 ; debug pulse start
     push block ; accepted detector snapshot to the M33
     irq 4 ; Signal to start the bus request on the CPU
@@ -100,5 +100,9 @@ end_cycle:
     jmp x-- end_cycle
     ; Snapshot/poll latency provides hold time beyond the observed bus end.
     mov pindirs, null
+    ; RESET can end the transfer before its reply arrives. In that case the
+    ; guard has already returned to idle and never consumes DATA_READY.
+    ; Retire this reply before rearming the detector for the next transfer.
+    irq next clear 3
     irq 5 ; Make detector know that bus request has finished
 .wrap

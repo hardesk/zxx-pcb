@@ -95,8 +95,27 @@ public:
     void begin_reset();
     void end_reset();
     void reset_cpu() { begin_reset(); end_reset(); }
-    BusRequest read_request();
-    void write_reply(uint32_t reply);
+    struct FifoAccess {
+        const volatile uint32_t* status;
+        const volatile uint32_t* rx;
+        volatile uint32_t* tx;
+        uint32_t rx_empty;
+        __attribute__((always_inline)) BusRequest read_request() const {
+            while (*status & rx_empty) {}
+            return {*rx};
+        }
+        __attribute__((always_inline)) void write_reply(uint32_t reply) const {
+            // Exactly one reply per accepted request. The detector is rearmed
+            // only after the service SM has pulled the previous reply and
+            // retired the bus cycle (IRQ5). Consequently TX cannot be full,
+            // including a transaction-safe reset's final reply.
+            *tx = reply;
+        }
+    };
+    // Cache this value once in the owner loop; SM assignments remain fixed.
+    FifoAccess fifo_access() const { return fifo_access_; }
+    __attribute__((always_inline)) BusRequest read_request() { return fifo_access().read_request(); }
+    __attribute__((always_inline)) void write_reply(uint32_t reply) { fifo_access().write_reply(reply); }
 
 private:
     PIO bus_pio_ = pio0;
@@ -107,6 +126,7 @@ private:
     uint detector_sm_ = 0;
     uint bus_sm_ = 0;
     uint32_t reset_hold_us_ = 10;
+    FifoAccess fifo_access_{};
 };
 
 class FrozenClockBusDriver {
