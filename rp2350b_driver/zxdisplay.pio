@@ -1,0 +1,29 @@
+; Packed RGB444, mode-0 serial output. DMA writes one native uint16_t
+; (0x0RGB) per pixel. RP2350 replicates narrow FIFO writes into both
+; halfwords; shifting left therefore sees the same pixel in bits 31:16.
+.program zxdisplay
+.pio_version 1
+.side_set 1
+.define public cycles_per_pixel 51
+.wrap_target
+    pull block       side 0     ; Stalls with clock low after the last pixel.
+    out null, 4      side 0     ; Skip the unused high nibble.
+    set x, 11        side 0
+bitloop:
+    out pins, 1      side 0 [1]
+    jmp x-- bitloop  side 1 [1]
+.wrap
+
+; Commands and parameters are 8-bit even when pixel data is RGB444.
+; CPU writes a byte in bits 7:0 of a full FIFO word.
+.program zxdisplay_command
+.pio_version 1
+.side_set 1
+.wrap_target
+    pull block       side 0
+    out null, 24     side 0
+    set x, 7         side 0
+command_bitloop:
+    out pins, 1      side 0 [1]
+    jmp x-- command_bitloop side 1 [1]
+.wrap

@@ -1,0 +1,26 @@
+; Passive estimate of nominal T-states: CLK minus transfer-qualified WAIT.
+; RZ80/TV80 samples WAIT on rising CLK. No outputs or CPU interrupts.
+.program z80_tstate_counter
+.pio_version 1
+; OUT PC selects these four entries, so the decode table must start at zero.
+.origin 0
+    jmp clock_count          ; Neither RD nor WR asserted: refresh/idle.
+    jmp y-- clock_count      ; RD asserted.
+    jmp y-- clock_count      ; WR asserted.
+    jmp y-- clock_count      ; Both asserted (also qualify this case).
+.wrap_target
+sample:
+    wait 0 gpio 24
+    wait 1 gpio 24
+    jmp pin clock_count      ; WAIT high: CPU can advance.
+    mov osr, ~pins           ; IN_BASE=IORQ28; inverted RD/WR are bits 2/3.
+    out null, 2
+    out pc, 2
+clock_count:
+    jmp x-- sample
+    mov isr, ~y              ; Y starts at -1, decremented for each wait.
+    push block
+    pull block               ; Endless TX DMA supplies clocks/window - 1.
+    mov x, osr
+    mov y, ~null
+.wrap
