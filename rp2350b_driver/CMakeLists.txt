@@ -75,8 +75,14 @@ add_custom_target(generate_z80_code
 
 add_executable(rp2350_driver
 	main.cpp
+	zxdisplay.cpp
+	z80_frame_interrupt.cpp
+	z80_tstate_counter.cpp
 	${DATA_HEADER}
 )
+
+pico_generate_pio_header(rp2350_driver ${CMAKE_CURRENT_LIST_DIR}/zxdisplay.pio)
+pico_generate_pio_header(rp2350_driver ${CMAKE_CURRENT_LIST_DIR}/z80_tstate_counter.pio)
 
 set(Z80_BUS_MODE "ASYNC" CACHE STRING
     "Z80 bus backend: MANUAL (CPU), ASYNC (asynchronous WAIT PIO), or FROZEN")
@@ -114,9 +120,11 @@ target_compile_definitions(rp2350_driver
 set(Z80_CLOCK_HZ "5000000" CACHE STRING "External Z80 clock frequency")
 message(STATUS "Z80 bus: ${Z80_BUS_MODE}, clock: ${Z80_CLOCK_HZ} Hz")
 set(Z80_REPLY_DELAY_US "0" CACHE STRING "Stress test: maximum varying delay before each bus reply")
+set(RP_SYS_CLOCK_KHZ "300000" CACHE STRING "RP2350 system clock; above 150 MHz raises VREG and slows flash SCK")
 target_compile_definitions(rp2350_driver PRIVATE
     Z80_CLOCK_HZ=${Z80_CLOCK_HZ}
     Z80_REPLY_DELAY_US=${Z80_REPLY_DELAY_US}
+    RP_SYS_CLOCK_KHZ=${RP_SYS_CLOCK_KHZ}
 )
 
 target_include_directories(rp2350_driver PRIVATE
@@ -130,8 +138,12 @@ pico_enable_stdio_rtt(rp2350_driver 1)
 
 target_link_libraries(rp2350_driver
     pico_stdlib
+    pico_multicore
     hardware_clocks
+    hardware_vreg
     hardware_pio
+    hardware_dma
+    hardware_pwm
 )
 option(Z80_WAIT_CAPTURE "Capture the first eight replies with PIO2/DMA" OFF)
 if (Z80_WAIT_CAPTURE)

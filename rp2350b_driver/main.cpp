@@ -8,9 +8,66 @@
 #include <pico/stdlib.h>
 #include <pico/stdio.h>
 #include <hardware/gpio.h>
+#include <hardware/clocks.h>
+#include <hardware/vreg.h>
+#include <hardware/structs/qmi.h>
 
 #include "z80_pins.hpp"
 #include "z80_pio_bus.hpp"
+#include "z80_frame_interrupt.hpp"
+#include "zx_keyboard.hpp"
+#include "zx_ula.hpp"
+#include "zx_tape.hpp"
+#include "zx_tape_rtt.hpp"
+#include <atomic>
+#include "zx_keyboard_rtt.hpp"
+#include "roms/48.h"
+#include "roms/128-0.h"
+#include "roms/128-1.h"
+static_assert(sizeof(spectrum_128_0_rom) == 16384 && sizeof(spectrum_128_1_rom) == 16384);
+static_assert(sizeof(spectrum_48_rom) == 16 * 1024);
+#include "scrs/Rambo.h"
+#include "scrs/GameOver.h"
+#include "scrs/RoboCop2.h"
+static_assert(sizeof(rambo_scr) == 6912 && sizeof(gameover_scr) == 6912
+              && sizeof(robocop2_scr) == 6912);
+#ifndef Z80_WAIT_CAPTURE
+#include <pico/multicore.h>
+#include "zxdisplay.hpp"
+#include <atomic>
+
+namespace {
+const std::atomic<const volatile uint8_t*>* core1_screen = nullptr;
+const ZxUla* core1_ula = nullptr;
+std::atomic<ZxDisplay*> core1_display{nullptr};
+
+void display_core1() {
+    // Acquire ownership after core0 has initialized the controller and buffer.
+    ZxDisplay* display;
+    while (!(display = core1_display.load(std::memory_order_acquire)))
+        tight_loop_contents();
+    // Read the selected physical screen bank directly (5 or 7).
+    // Z80 writes may become visible during conversion; there is no snapshot.
+    constexpr uint64_t frame_us = 20000;
+    constexpr uint64_t flash_half_period_us = 16 * frame_us;
+    const uint64_t epoch = time_us_64();
+    uint64_t next_frame = epoch;
+    while (true) {
+        const bool flash = ((time_us_64() - epoch) / flash_half_period_us) & 1;
+        const auto* screen = core1_screen->load(std::memory_order_acquire);
+        display->render(screen, flash, core1_ula); // Convert/transmit alternate eight-line buffers.
+        next_frame += frame_us;
+        const uint64_t now = time_us_64();
+        // If rendering misses a deadline, resume immediately without building
+        // up a backlog or dropping to a fixed 25 Hz schedule.
+        if (next_frame < now) next_frame = now;
+        // Stay on core1: sleep_until() may use the default alarm pool on
+        // core0, adding timer interrupts to the time-sensitive bus service.
+        busy_wait_until(from_us_since_boot(next_frame));
+    }
+}
+} // namespace
+#endif
 #ifdef Z80_WAIT_CAPTURE
 #include "tests/wait_capture.hpp"
 #endif
@@ -91,7 +148,16 @@ struct ZxEnv
 
     uint16_t m_ctrl_prev = (uint16_t)(IO_CTRL>>IO_CTRL_SHIFT);
 
-    uint8_t peek(uint16_t addr) const { return m_ram[addr]; }
+    uint8_t peek(uint16_t addr) const {
+        return static_cast<const DerivedT*>(this)->read_memory(addr);
+    }
+
+    uint8_t read_memory(uint16_t addr) const { return static_cast<uint8_t>(m_ram[addr]); }
+    void write_memory(uint16_t addr, uint8_t data) {
+        self().impl_debug_trap(addr, data);
+        self().impl_on_memwrite(addr, data);
+        m_ram[addr] = static_cast<char>(data);
+    }
 
     // ctrl is shifted to 0 bits
     void react(uint16_t ctrl, uint32_t addr_data) {
@@ -104,14 +170,12 @@ struct ZxEnv
             if (IS_LO(pWR, ctrl) && IS_HI(pWR, ctrlx)) {
                 uint16_t addr = ADR(addr_data);
                 uint8_t dat = DAT(addr_data);
-                self().impl_debug_trap(addr, dat);
-                self().impl_on_memwrite(addr, dat);
-                m_ram[addr] = dat;
+                self().write_memory(addr, dat);
             } else
             // CPU READs
             if (IS_LO(pRD, ctrl) && IS_HI(pRD, ctrlx)) {
                 uint16_t addr = ADR(addr_data);
-                uint8_t dat = m_ram[addr];
+                uint8_t dat = peek(addr);
                 self().impl_on_memread(addr, IS_LO(pM1, ctrl));
                 if (IS_LO(pM1, ctrl)) {
                     // printf("\033[34mcode %04x %02x\033[0m\n", addr, dat);
@@ -154,17 +218,18 @@ struct ZxEnv
 
     void dump_memory(unsigned addr, size_t size, MemoryDumpOpts opts = MemoryDumpOpts()) {
         for (size_t i=0; i<size; ) {
-            char const* pl = m_ram + addr + i;
             size_t mx = std::min(size-i, (size_t)opts.width);
             if (opts.show_address)
                 printf("%08x  ", addr + i);
             for (size_t q=0; q<mx; ++q)
-                printf("%02x%s", pl[q], q == mx-1 ? "" : " ");
+                printf("%02x%s", peek(uint16_t(addr + i + q)), q == mx-1 ? "" : " ");
             printf("%*s", 1 + (opts.width-mx)*3, "");
             if (opts.ascii) {
                 printf("%c", ' ');
-                for (size_t q=0; q<mx; ++q)
-                    printf("%c", pl[q] >= 32 && pl[q] <= 127 ? pl[q] : '.' );
+                for (size_t q=0; q<mx; ++q) {
+                    const uint8_t value = peek(uint16_t(addr + i + q));
+                    printf("%c", value >= 32 && value <= 127 ? value : '.');
+                }
             }
             printf("\n");
             i += mx;
@@ -172,7 +237,7 @@ struct ZxEnv
     }
 
 protected:
-    void impl_debug_trap(uint16_t addr, uint8_t trapno) {}
+    __attribute__((noinline)) void impl_debug_trap(uint16_t addr, uint8_t trapno) {}
 
     void impl_on_memread(uint16_t addr, bool m1) {}
     void impl_on_memwrite(uint16_t addr, uint8_t dat) {}
@@ -184,9 +249,25 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
 
     Rp2350ZxEnv() {
         m_ram_size = 256*256;
-        m_ram = new char[m_ram_size];
-        memset(m_ram, 0, m_ram_size);
+        // Eight physical RAM banks plus the legacy RAM backing below 0x4000.
+        // Keep banks 5/2/0 at their old flat addresses for the display and 48K use.
+        m_ram = new char[9 * page_size]{};
+        m_ram_banks[5] = m_ram + 0x4000;
+        m_ram_banks[2] = m_ram + 0x8000;
+        m_ram_banks[0] = m_ram + 0xc000;
+        unsigned storage_page = 4;
+        constexpr unsigned extra_banks[] = {1, 3, 4, 6, 7};
+        for (unsigned bank : extra_banks)
+            m_ram_banks[bank] = m_ram + page_size * storage_page++;
+        for (unsigned page = 0; page < 4; ++page) {
+            m_ram_pages[page] = m_ram + page_size * page;
+            m_read_pages[page] = reinterpret_cast<const uint8_t*>(m_ram_pages[page]);
+        }
+        display_screen.store(reinterpret_cast<const volatile uint8_t*>(m_ram_banks[5]));
     }
+
+    Rp2350ZxEnv(const Rp2350ZxEnv&) = delete;
+    Rp2350ZxEnv& operator=(const Rp2350ZxEnv&) = delete;
 
     ~Rp2350ZxEnv() {
         delete[] m_ram;
@@ -228,48 +309,174 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         gpio_set_dir_masked(IO_DATA, 0);
     }
 
-    void handle_io_out(uint16_t addr, uint8_t data) {
+    void __no_inline_not_in_flash_func(handle_io_out)(uint16_t addr, uint8_t data) {
+        // Independent partial decoders: an even paging alias reaches both.
+        if (!(addr & 1)) ula.write(data);
+        if (m_128k && !(addr & 0x8002) && !(m_paging & 0x20)) {
+            m_paging = data & 0x3f;
+            select_ram_bank(data & 7);
+            select_rom((data >> 4) & 1);
+            display_screen.store(reinterpret_cast<const volatile uint8_t*>(
+                m_ram_banks[(data & 8) ? 7 : 5]), std::memory_order_release);
+        }
         if (addr == 0xff81) {
             printf("DATA on port %04x: %02x\n", addr, data);
         } else if (addr == 0xff83) {
             printf("%c", data);
         }
     }
-    uint8_t handle_io_in(uint16_t port) {
-        return (port & 1) ? 0xFF : 0xBF;
+    ZxKeyboard keyboard;
+    ZxUla ula;
+    ZxTape tape;
+    std::atomic<const volatile uint8_t*> display_screen{nullptr};
+
+    // ROM slots 0/1 must contain the 128 editor and its companion BASIC ROM.
+    bool enable_128k() {
+        if (!m_roms[0] || !m_roms[1]) return false;
+        m_128k = true;
+        reset_machine();
+        return true;
+    }
+    uint8_t paging_register() const { return m_paging; }
+    void reset_machine() {
+        // Reset mapping/peripherals, not physical RAM. Call with RZ80 held reset.
+        m_paging = 0;
+        m_rom_mask = 0;
+        m_ram_pages[0] = m_ram;
+        m_ram_pages[1] = m_ram_banks[5];
+        m_ram_pages[2] = m_ram_banks[2];
+        for (unsigned page=0;page<3;++page)
+            m_read_pages[page]=reinterpret_cast<const uint8_t*>(m_ram_pages[page]);
+        select_ram_bank(0);
+        select_rom(0);
+        display_screen.store(reinterpret_cast<const volatile uint8_t*>(m_ram_banks[5]),
+                             std::memory_order_release);
+        ula.reset();
+        keyboard.clear();
+        tape.reset();
+    }
+
+    uint8_t __no_inline_not_in_flash_func(handle_io_in)(uint16_t port) {
+        uint8_t fast_byte;
+        if (tape.fast_io(port, fast_byte)) return fast_byte;
+        if (port & 1) return 0xff;
+        const uint8_t value = ula.read(keyboard, port);
+        return tape.has_tape() ? uint8_t((value & ~0x40) | (tape.read_ear() ? 0x40 : 0)) : value;
     }
 
     uint8_t handle_interrupt_ack() { return 0xff; }
 
-    uint32_t service_pio_request(z80pio::BusRequest const& request) {
+    static constexpr unsigned page_size = 0x4000;
+    static constexpr unsigned max_roms = 4, ram_bank_count = 8;
+
+    // Register a borrowed 16 KiB ROM in a numbered slot (0..3). Registration
+    // does not select it. Keep the data alive; call mapping APIs on core0 only.
+    bool add_rom(const unsigned char* data, size_t size, unsigned bank) {
+        if (!data || size != page_size || bank >= max_roms || m_roms[bank]) return false;
+        m_roms[bank] = data;
+        return true;
+    }
+
+    // Normally page=0; other 16 KiB CPU slots can also be write-protected ROM.
+    bool select_rom(unsigned bank, unsigned page = 0) {
+        if (bank >= max_roms || page >= 4 || !m_roms[bank]) return false;
+        m_rom_pages[page] = m_roms[bank];
+        m_read_pages[page] = m_roms[bank];
+        if (page == 0) {
+            // Timing profile is only valid for the standard ROM tape routine.
+            m_standard_loader_rom = memcmp(m_roms[bank]+0x0556, standard_loader_code,
+                                          sizeof(standard_loader_code)) == 0;
+        }
+        m_rom_mask |= uint8_t(1u << page);
+        return true;
+    }
+
+    bool unmap_rom(unsigned page = 0) {
+        if (page >= 4) return false;
+        m_rom_mask &= uint8_t(~(1u << page));
+        m_read_pages[page] = reinterpret_cast<const uint8_t*>(m_ram_pages[page]);
+        if (page == 0) m_standard_loader_rom = false;
+        return true;
+    }
+
+    // Select RAM at 0xc000..0xffff. Banks 5 and 2 alias the fixed lower slots.
+    bool select_ram_bank(unsigned bank) {
+        if (bank >= ram_bank_count) return false;
+        m_ram_pages[3] = m_ram_banks[bank];
+        m_read_pages[3] = reinterpret_cast<const uint8_t*>(m_ram_banks[bank]);
+        m_rom_mask &= uint8_t(~(1u << 3));
+        return true;
+    }
+
+    uint8_t read_memory(uint16_t addr) const {
+        // Paging changes select the pointer; every bus read is one lookup.
+        return m_read_pages[addr >> 14][addr & (page_size - 1)];
+    }
+
+    void write_memory(uint16_t addr, uint8_t data) {
+        const unsigned page = addr >> 14;
+        if (m_rom_mask & (1u << page)) return;
+        if (!m_128k && page==0) impl_debug_trap(addr, data);
+        impl_on_memwrite(addr, data);
+        m_ram_pages[page][addr & (page_size - 1)] = static_cast<char>(data);
+    }
+
+    // True for MREQ+RD (fetch or read) while no tape loader observes the CPU.
+    __attribute__((always_inline)) bool fast_memory_read(z80pio::BusRequest request) const {
+        return !(request.raw & (z80pio::kRawMreq | z80pio::kRawRd)) && !tape.observes_cpu();
+    }
+
+    // MREQ+WR to RAM in 128K mode (no 48K CP/M trap). ROM pages ignore writes.
+    __attribute__((always_inline)) bool fast_memory_write(z80pio::BusRequest request) {
+        if ((request.raw & (z80pio::kRawMreq | z80pio::kRawWr)) || !m_128k) return false;
+        const uint16_t addr = request.address();
+        const unsigned page = addr >> 14;
+        if (!(m_rom_mask & (1u << page)))
+            m_ram_pages[page][addr & (page_size - 1)] = static_cast<char>(request.data());
+        return true;
+    }
+
+    // Complete request handling; the bus loop inlines only the fast paths.
+    uint32_t __no_inline_not_in_flash_func(service_pio_request)(z80pio::BusRequest request) {
         const uint16_t addr = request.address();
         const uint8_t data = request.data();
 
-        if (request.mreq() && request.rd()) {
-            uint8_t value = static_cast<uint8_t>(m_ram[addr]);
-            impl_on_memread(addr, request.m1());
-            return z80pio::read_reply(value);
+        if (request.mreq()) {
+            if (request.rd()) {
+                uint8_t value = read_memory(addr);
+                // Only the ROM loader and its first outgoing fetch need tape work.
+                // Ordinary ROM/RAM reads never run the tape state machine.
+                if (tape.observes_cpu() &&
+                    ((m_standard_loader_rom && uint16_t(addr-0x0556)<=0x00ae) ||
+                     tape.loader_call_active()))
+                    value = service_tape_read(addr, value, request.m1());
+                return z80pio::read_reply(value);
+            }
+
+            if (request.wr()) {
+                write_memory(addr, data);
+                return z80pio::write_reply();
+            }
         }
 
-        if (request.mreq() && request.wr()) {
-            impl_debug_trap(addr, data);
-            impl_on_memwrite(addr, data);
-            m_ram[addr] = static_cast<char>(data);
-            return z80pio::write_reply();
+        if (request.iorq()) {
+            if (request.rd())
+                return z80pio::read_reply(handle_io_in(addr));
+
+            if (request.wr()) {
+                handle_io_out(addr, data);
+                return z80pio::write_reply();
+            }
+            if (request.m1())
+                return z80pio::read_reply(handle_interrupt_ack());
         }
-
-        if (request.iorq() && request.rd())
-            return z80pio::read_reply(handle_io_in(addr));
-
-        if (request.iorq() && request.wr()) {
-            handle_io_out(addr, data);
-            return z80pio::write_reply();
-        }
-
-        if (request.iorq() && request.m1())
-            return z80pio::read_reply(handle_interrupt_ack());
 
         return z80pio::write_reply();
+    }
+
+    uint8_t __no_inline_not_in_flash_func(service_tape_read)(uint16_t addr, uint8_t value, bool m1) {
+        if (m1 && tape.observes_cpu()) tape.observe_fetch(addr,value,m_standard_loader_rom);
+        return m_standard_loader_rom ? tape.rom_byte(addr,value) : value;
     }
 
     template<class... Bytes>
@@ -285,7 +492,7 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         // by default 0x100 jumps to 0x8000
         store_bytes(m_ram + 0x100, 0xc3, 0x00, 0x80);    // jp 0x8000
 
-        char* p = m_ram + CPM_TRAP_CODE;
+        char* p = ram_pointer(CPM_TRAP_CODE);
         p = store_bytes(p, 0xed, 0x43, CPM_TRAP_STORE, CPM_TRAP_STORE >> 8);    // ld (CPM_TRAP_STORE+0), bc
         p = store_bytes(p, 0xed, 0x53, CPM_TRAP_STORE+2, CPM_TRAP_STORE >> 8);  // ld (CPM_TRAP_STORE+2), de
         p = store_bytes(p, 0x3e, 0x01);                                 // ld a, 1
@@ -295,36 +502,74 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
 
     template<class... Bytes>
     void fill(uint16_t addr, uint16_t count, Bytes... bytes) {
-        constexpr unsigned chunk_size = sizeof...(bytes);
+        static_assert(sizeof...(bytes) > 0);
+        if (!count) return;
         uint8_t templ[] = { static_cast<uint8_t>(bytes)... };
         unsigned written = 0;
         do {
-            char* p = m_ram + uint16_t(addr + written);
+            char* p = ram_pointer(uint16_t(addr + written));
             unsigned i = written % sizeof(templ);
             *p = templ[i];
         } while(++written, --count);
     }
 
     void load(unsigned char const* data, size_t size, uint16_t origin) {
-        unsigned char* dest = (unsigned char*)m_ram + origin;
-        memcpy(dest, data, size);
+        // Host loading bypasses ROM protection but targets the mapped RAM
+        // underneath it. Split at page boundaries, including a banked top page.
+        if (!data || size > 0x10000u - unsigned(origin)) return;
+        unsigned address = origin;
+        while (size) {
+            const size_t chunk = std::min(size, size_t(page_size - (address & (page_size - 1))));
+            memcpy(ram_pointer(uint16_t(address)), data, chunk);
+            address += chunk;
+            data += chunk;
+            size -= chunk;
+        }
     }
 
 private:
-    void impl_debug_trap(uint16_t addr, uint8_t trapno) {
+    static constexpr uint8_t standard_loader_code[] = {
+        0x14, 0x08, 0x15, 0xf3, 0x3e, 0x0f, 0xd3, 0xfe, 0x21, 0x3f, 0x05, 0xe5, 0xdb, 0xfe, 0x1f, 0xe6,
+        0x20, 0xf6, 0x02, 0x4f, 0xbf, 0xc0, 0xcd, 0xe7, 0x05, 0x30, 0xfa, 0x21, 0x15, 0x04, 0x10, 0xfe,
+        0x2b, 0x7c, 0xb5, 0x20, 0xf9, 0xcd, 0xe3, 0x05, 0x30, 0xeb, 0x06, 0x9c, 0xcd, 0xe3, 0x05, 0x30,
+        0xe4, 0x3e, 0xc6, 0xb8, 0x30, 0xe0, 0x24, 0x20, 0xf1, 0x06, 0xc9, 0xcd, 0xe7, 0x05, 0x30, 0xd5,
+        0x78, 0xfe, 0xd4, 0x30, 0xf4, 0xcd, 0xe7, 0x05, 0xd0, 0x79, 0xee, 0x03, 0x4f, 0x26, 0x00, 0x06,
+        0xb0, 0x18, 0x1f, 0x08, 0x20, 0x07, 0x30, 0x0f, 0xdd, 0x75, 0x00, 0x18, 0x0f, 0xcb, 0x11, 0xad,
+        0xc0, 0x79, 0x1f, 0x4f, 0x13, 0x18, 0x07, 0xdd, 0x7e, 0x00, 0xad, 0xc0, 0xdd, 0x23, 0x1b, 0x08,
+        0x06, 0xb2, 0x2e, 0x01, 0xcd, 0xe3, 0x05, 0xd0, 0x3e, 0xcb, 0xb8, 0xcb, 0x15, 0x06, 0xb0, 0xd2,
+        0xca, 0x05, 0x7c, 0xad, 0x67, 0x7a, 0xb3, 0x20, 0xca, 0x7c, 0xfe, 0x01, 0xc9, 0xcd, 0xe7, 0x05,
+        0xd0, 0x3e, 0x16, 0x3d, 0x20, 0xfd, 0xa7, 0x04, 0xc8, 0x3e, 0x7f, 0xdb, 0xfe, 0x1f, 0xd0, 0xa9,
+        0xe6, 0x20, 0x28, 0xf3, 0x79, 0x2f, 0x4f, 0xe6, 0x07, 0xf6, 0x08, 0xd3, 0xfe, 0x37, 0xc9,
+    };
+    bool m_standard_loader_rom = false;
+    bool m_128k = false;
+    uint8_t m_paging = 0;
+    uint8_t m_rom_mask = 0; // Bit n: CPU addresses n*16K..(n+1)*16K-1 are ROM.
+    const unsigned char* m_roms[max_roms]{}; // Registered ROM bank images.
+    const unsigned char* m_rom_pages[4]{};  // Selected ROM pointer per CPU page.
+    char* m_ram_banks[ram_bank_count]{};
+    char* m_ram_pages[4]{};
+    const uint8_t* m_read_pages[4]{}; // Cached current ROM-or-RAM read mapping.
+
+    char* ram_pointer(uint16_t addr) {
+        return m_ram_pages[addr >> 14] + (addr & (page_size - 1));
+    }
+
+    __attribute__((noinline)) void impl_debug_trap(uint16_t addr, uint8_t trapno) {
         if (addr == 4) {
             printf("MEM4 <- %02x\n", trapno);
         }
         if (addr == CPM_TRAP_TRIGGER && trapno == 1) {
-            uint8_t c = *(m_ram+CPM_TRAP_STORE+0);
-            uint16_t de = *(uint16_t*)(m_ram+CPM_TRAP_STORE+2);
+            uint8_t c = read_memory(CPM_TRAP_STORE);
+            uint16_t de = read_memory(CPM_TRAP_STORE+2) | (uint16_t(read_memory(CPM_TRAP_STORE+3)) << 8);
             if (c == 2) {
                 uint8_t e = de&0xff;
                 printf("%c", e);
             } else if (c==9) {
-                char const* str = (char const*)m_ram + de;
-                while (*str != '$' && *str != 0) {
-                    printf("%c", *str++);
+                for (unsigned i = de; i < 0x10000; ++i) {
+                    const uint8_t ch = read_memory(uint16_t(i));
+                    if (ch == '$' || ch == 0) break;
+                    printf("%c", ch);
                 }
             }
         }
@@ -351,7 +596,7 @@ inline static uint32_t gpio_get_all_hi() {
 
 #define LED_PIN (32+14)
 
-constexpr uint kZ80ResetButtonPin = 40;
+constexpr uint kZ80ResetButtonPin = 38;
 
 void init_z80_reset_button()
 {
@@ -423,8 +668,124 @@ private:
 //   0x64, 0x21, 0x00
 // };
 
+static __attribute__((noinline)) bool poll_z80_controls(Rp2350ZxEnv& zx,
+    ZxKeyboardRtt& keyboard_rtt, ZxTapeRtt& tape_rtt, DebButton& reset_btn)
+{
+    keyboard_rtt.poll(zx.keyboard);
+    tape_rtt.poll(zx.tape);
+    const bool keyboard_reset = keyboard_rtt.take_reset_request();
+    const bool tape_reset = tape_rtt.take_reset_request();
+    return reset_btn.check(&z80_reset_button_pressed) || keyboard_reset || tape_reset;
+}
+
+// Assert RESET before replying so the currently stalled transaction is the
+// last one. Once the reply releases the CPU, the PIO reset guard keeps
+// subsequent samples out of the request FIFO.
+template<class RequestIo>
+static void __no_inline_not_in_flash_func(reset_on_next_request)(Rp2350ZxEnv& zx,
+    z80pio::ActiveBusDriver& bus, RequestIo& request_io,
+    Z80FrameInterrupt& frame_interrupt, uint32_t kZ80ClockHz)
+{
+    const z80pio::BusRequest request = request_io.read_request();
+    frame_interrupt.stop();
+    bus.begin_reset();
+    request_io.write_reply(zx.service_pio_request(request));
+    zx.reset_machine();
+    bus.end_reset();
+    frame_interrupt.start(kZ80ClockHz);
+}
+
+// SRAM avoids flash-cache misses in the request-to-reply path. Tape/RTT
+// helpers remain separate, so normal memory transfers keep a small hot loop.
+static void __no_inline_not_in_flash_func(run_z80_bus)(Rp2350ZxEnv& zx,
+    z80pio::ActiveBusDriver& bus, ZxKeyboardRtt& keyboard_rtt,
+    ZxTapeRtt& tape_rtt, Z80FrameInterrupt& frame_interrupt, uint32_t kZ80ClockHz)
+{
+    constexpr const unsigned char* screens[] = {rambo_scr, gameover_scr, robocop2_scr};
+    unsigned next_screen = 0;
+    absolute_time_t next_screen_time = get_absolute_time();
+    DebButton reset_btn;
+#if Z80_REPLY_DELAY_US > 0
+    uint32_t delay_state = 1;
+#endif
+#ifdef Z80_WAIT_CAPTURE
+    // Capture buffer is 4 KiB: keep it off the core's small stack.
+    static WaitCapture capture;
+    unsigned capture_request = 0;
+#endif
+    unsigned housekeeping_divider = 0;
+#if Z80_BUS_MODE == Z80_BUS_MODE_ASYNC
+    const auto request_io = bus.fifo_access();
+#else
+    auto& request_io = bus;
+#endif
+    while (true) {
+        const z80pio::BusRequest request = request_io.read_request();
+
+#if Z80_REPLY_DELAY_US > 0
+        delay_state = delay_state * 1664525u + 1013904223u;
+        busy_wait_us_32(delay_state % (Z80_REPLY_DELAY_US + 1u));
+#endif
+
+        // Ordinary MREQ+RD (fetch/read) with no tape observer and 128K RAM
+        // writes are inline; everything else takes the outlined SRAM path.
+        const auto reply = zx.fast_memory_read(request)
+            ? z80pio::read_reply(zx.read_memory(request.address()))
+            : zx.fast_memory_write(request) ? z80pio::write_reply()
+            : zx.service_pio_request(request);
+#ifdef Z80_WAIT_CAPTURE
+        if (capture_request < 8)
+            capture.start();
+#endif
+        request_io.write_reply(reply);
+#ifdef Z80_WAIT_CAPTURE
+        if (capture_request < 8)
+            capture.finish(capture_request++);
+#endif
+
+        // Reply first. Bound host/button work to every 256 transfers instead
+        // of doing timer checks and RTT parsing in every stalled transaction.
+        // A requested reset completes on the next transaction, off the hot path.
+        if ((++housekeeping_divider & 255u) == 0 &&
+            poll_z80_controls(zx, keyboard_rtt, tape_rtt, reset_btn))
+            reset_on_next_request(zx, bus, request_io, frame_interrupt, kZ80ClockHz);
+    }
+}
+
+#ifndef RP_SYS_CLOCK_KHZ
+#define RP_SYS_CLOCK_KHZ 300000
+#endif
+
+// Rewrite XIP timing while executing from SRAM; the next flash access uses it.
+static void __no_inline_not_in_flash_func(set_flash_timing)(uint32_t clkdiv, uint32_t rxdelay)
+{
+    uint32_t timing = qmi_hw->m[0].timing;
+    timing &= ~(QMI_M0_TIMING_CLKDIV_BITS | QMI_M0_TIMING_RXDELAY_BITS);
+    qmi_hw->m[0].timing = timing | (clkdiv << QMI_M0_TIMING_CLKDIV_LSB) |
+                          (rxdelay << QMI_M0_TIMING_RXDELAY_LSB);
+    (void)qmi_hw->m[0].timing;
+}
+
+// The Z80 reply path is a fixed number of RP cycles, so its latency scales
+// with clk_sys. LCD, CLK, PWM and counter dividers derive from clk_sys.
+static void configure_system_clock()
+{
+    static_assert(RP_SYS_CLOCK_KHZ >= 150000 && RP_SYS_CLOCK_KHZ <= 300000);
+    if constexpr (RP_SYS_CLOCK_KHZ != 150000) {
+        vreg_set_voltage(VREG_VOLTAGE_1_20);
+        busy_wait_us_32(1000);
+        // Boot timing is clkdiv 3 / rxdelay 2 at 150 MHz (50 MHz SCK). Keep
+        // SCK and sampling delay in nanoseconds before raising clk_sys.
+        constexpr uint32_t scale_num = RP_SYS_CLOCK_KHZ, scale_den = 150000;
+        set_flash_timing((3 * scale_num + scale_den - 1) / scale_den,
+                         std::min<uint32_t>(7, (2 * scale_num + scale_den - 1) / scale_den));
+        if (!set_sys_clock_khz(RP_SYS_CLOCK_KHZ, false)) panic("Unsupported RP_SYS_CLOCK_KHZ");
+    }
+}
+
 int main()
 {
+    configure_system_clock();
     stdio_init_all();
 
     gpio_set_dir(LED_PIN, true);
@@ -433,14 +794,25 @@ int main()
 
     Rp2350ZxEnv zx;
     zx.init();
+    static ZxKeyboardRtt keyboard_rtt;
+    keyboard_rtt.init();
+    static ZxTapeRtt tape_rtt;
+    tape_rtt.init();
     init_z80_reset_button();
 
-    uint16_t prog_org = 0x8000;
-    zx.prepare_vectors(prog_org);
-    zx.load(z80_prog, count_of(z80_prog), prog_org);
+    // Original 128K editor/menu ROM and companion 48K BASIC ROM.
+    if (!zx.add_rom(spectrum_128_0_rom, sizeof(spectrum_128_0_rom), 0) ||
+        !zx.add_rom(spectrum_128_1_rom, sizeof(spectrum_128_1_rom), 1) ||
+        !zx.enable_128k())
+        panic("Failed to configure 128K ROMs");
+
+    // CP/M test-program setup (disabled while booting the Spectrum ROM).
+    // uint16_t prog_org = 0x8000;
+    // zx.prepare_vectors(prog_org);
+    // zx.load(z80_prog, count_of(z80_prog), prog_org);
     // zx.fill(0, 0, 0x7e);
-    zx.dump_memory(0, 32, { .width = 16, .ascii = true } );
-    zx.dump_memory(prog_org, 64, { .width = 16, .ascii = true } );
+    // zx.dump_memory(0, 32, { .width = 16, .ascii = true } );
+    // zx.dump_memory(prog_org, 64, { .width = 16, .ascii = true } );
 
     printf("Hello from RP2350 over RTT!\n");
     char buf[128];
@@ -465,52 +837,33 @@ int main()
     // }
 
     constexpr uint32_t kZ80ClockHz = Z80_CLOCK_HZ;
-    printf("RZ80 speed %dkHz, bus driver '%s'\n", kZ80ClockHz/1000, z80pio::ActiveBusDriver::id);
+    printf("RZ80 speed %dkHz, RP %lukHz, bus driver '%s'\n", kZ80ClockHz/1000,
+           (unsigned long)(clock_get_hz(clk_sys)/1000), z80pio::ActiveBusDriver::id);
     z80pio::ActiveBusDriver bus;
+#ifndef Z80_WAIT_CAPTURE
+    // Z80 remains held in reset while the LCD initializes. After launch,
+    // core1 exclusively owns display conversion, commands, DMA and pacing.
+    core1_screen = &zx.display_screen;
+    core1_ula = &zx.ula;
+    static ZxDisplay display;
+    display.init_lcd();
+    core1_display.store(&display, std::memory_order_release);
+#else
+    // WaitCapture needs PIO2 GPIO0..31; the LCD needs GPIO16..47.
+    printf("LCD disabled: PIO2 reserved for WAIT capture\n");
+#endif
     bus.init(kZ80ClockHz);
+#ifndef Z80_WAIT_CAPTURE
+    display.start_tstate_counter(kZ80ClockHz);
+    multicore_launch_core1(display_core1);
+#endif
     bus.reset_cpu();
 
-    DebButton reset_btn;
-#if Z80_REPLY_DELAY_US > 0
-    uint32_t delay_state = 1;
-#endif
-#ifdef Z80_WAIT_CAPTURE
-    // Capture buffer is 4 KiB: keep it off the core's small stack.
-    static WaitCapture capture;
-    unsigned capture_request = 0;
-#endif
-    while (true) {
-        const z80pio::BusRequest request = bus.read_request();
+    // Optional hardware 50 Hz active-low INT on GPIO32. At 5 MHz the
+    // 32-T-state pulse rounds up to 7 us; no main-loop polling is needed.
+    Z80FrameInterrupt frame_interrupt;
+    frame_interrupt.start(kZ80ClockHz); // Required by the ROM keyboard scanner.
+    // frame_interrupt.stop(); // Use before a later reset if interrupts were enabled.
 
-        // bool reset_requested = reset_btn.check(&z80_reset_button_pressed);
-
-        // Assert RESET before replying so the currently stalled transaction
-        // is the last one. Once the reply releases the CPU, the PIO reset
-        // guard keeps subsequent samples out of the request FIFO.
-        // if (reset_requested)
-        //     bus.begin_reset();
-
-        // request.dump(zx.peek(request.address()));
-
-#if Z80_REPLY_DELAY_US > 0
-        delay_state = delay_state * 1664525u + 1013904223u;
-        busy_wait_us_32(delay_state % (Z80_REPLY_DELAY_US + 1u));
-#endif
-
-        const auto reply = zx.service_pio_request(request);
-#ifdef Z80_WAIT_CAPTURE
-        if (capture_request < 8)
-            capture.start();
-#endif
-        bus.write_reply(reply);
-#ifdef Z80_WAIT_CAPTURE
-        if (capture_request < 8)
-            capture.finish(capture_request++);
-#endif
-
-        // if (reset_requested) {
-        //     bus.end_reset();
-        //     printf("Z80 reset from GPIO40 button\n");
-        // }
-    }
+    run_z80_bus(zx, bus, keyboard_rtt, tape_rtt, frame_interrupt, kZ80ClockHz);
 }
