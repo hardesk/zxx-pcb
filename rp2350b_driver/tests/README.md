@@ -119,3 +119,136 @@ python3 tests/capture_wait_trace.py /tmp/high-wait/build/rp2350_driver.elf /tmp/
 # Resets the already-flashed checker; requires a fresh boot and PASS progress:
 python3 tests/repeat_wait_startup.py /tmp/high-wait-restarts --count 20
 ```
+
+
+## LCD strip renderer
+
+After building the firmware, run `python3 tests/test_zxdisplay.py` (an optional
+argument selects another build directory). This executes the assembled pixel
+and command PIO instructions, then uses a sanitizer-enabled host test to check
+all Spectrum bitmap/attribute addresses, BRIGHT/FLASH, and the 592 DMA segments
+forming the 272x208 image plus an eight-pixel border. It also prepares the next
+strip before consuming the current one to check that the two buffers are independent.
+
+`ZxDisplay::render(screen, flash)` owns an entire frame on core1. Two eight-line
+pixel buffers alternate: conversion fills one while data/control DMA channels
+stream the other. The final descriptor of each strip stops chaining and sets a
+raw completion flag; core1 starts another strip only once it is prepared. No
+per-pixel CPU FIFO writes or DMA NVIC interrupts are used for pixel streaming.
+
+`set_border(rgb444)` and `set_border_line(row, left, right)` are display-core-only
+APIs, called between frames. Border row numbers cover all 208 output rows;
+top/bottom rows use the left colour across the full 272 pixels. No Z80 port
+interception is installed. The outer LCD margins are cleared black at startup.
+
+For on-device timing, inspect `main::display.m_last_frame_us`, `m_max_frame_us`
+and `m_frames` without halting the target. Debugger halts contaminate frame
+latency measurements. The host checks do not validate electrical timing or DMA
+hardware handshakes.
+
+On-device check (2026-10-06, RP2350 at 150 MHz): the two-channel renderer
+completed 504 frames in 10.078 seconds without debugger halts. Latest frame
+work was 19,249 us; the recorded maximum was 19,309 us. Live screen RAM matched
+all 6912 source bytes for Rambo, GameOver and RoboCop2 during the three-second
+slideshow. These timings describe this tested workload, not a worst-case bound.
+
+## ROM and RAM banking
+
+Run `python3 tests/test_rom.py` to test the production environment classes with
+host GPIO stubs and address/undefined-behaviour sanitizers. It checks all four
+ROM slots and CPU pages, ignored ROM writes, bus fetches, eight independent RAM
+banks, fixed-bank aliases, and host loads crossing a page boundary.
+
+`add_rom(data, size, bank)` registers an exactly 16 KiB borrowed image in ROM
+slot 0..3; `select_rom(bank)` maps it at 0x0000. The optional second argument
+selects another CPU page (0..3). `unmap_rom(page)` exposes its underlying RAM.
+A four-bit mask controls ROM protection, with direct per-page pointer lookup.
+Call mapping APIs on core0; registered images must remain alive.
+
+RAM banks 5 and 2 are fixed at 0x4000 and 0x8000. `select_ram_bank(bank)` maps
+bank 0..7 at 0xC000, removing any ROM overlay there. Bank 0 is the default.
+Selecting bank 5 or 2 aliases the fixed slot, including the LCD's live bank-5
+screen memory at `m_ram + 0x4000`. Allocation is 128 KiB of banked RAM plus
+16 KiB of legacy RAM underneath the low ROM slot. Host `load`/`fill` target
+mapped backing RAM, even underneath a ROM overlay. The 128K machine now drives these APIs from port 0x7FFD, including its
+paging lock and bank-7 shadow display. See `SPECTRUM128.md`.
+
+Bus service latency measurements and SRAM-loop changes: [2026-10-08 results](bus_latency_20261008.md).
+Use `python3 tests/test_tape_cli.py` for filename completion/history and
+`python3 tests/test_tape_fast.py` for ROM fast-load regression tests.
+
+## VIBRATE demo hang
+
+See [vibrate_hang_20261008.md](vibrate_hang_20261008.md) for the captured IM2
+interrupt overwriting a stack-based drawing table, and the 25 Hz timing
+experiment that isolates the frame-budget failure.
+
+POWER_UP.TAP stops after its RAM blocks because the TAP's block order does
+not match its BASIC load order (TR-DOS origin); see
+[power_up_hang_20261008.md](power_up_hang_20261008.md).
+
+Passive CLK/WAIT measurements over 500 consecutive 20 ms windows:
+[frame_budget_20261008.md](frame_budget_20261008.md). The reusable capture tool
+is `measure_frame_budget.py`; it uses spare PIO/DMA resources without flashing
+or adding work to the bus-service loop.
+
+## Runtime T-state label
+
+The normal LCD firmware now runs `Z80TstateCounter` continuously. One PIO2
+state machine counts transfer-qualified WAIT at rising CLK edges in 20 ms
+windows. Two endless DMA channels reload the window and store a 64-entry
+ring; there are no measurement interrupts or bus-loop calls. Core1 polls
+the ring between rendered frames and averages its latest 50 samples once
+per second. The outer-border label now shows, for example, ` 67022 T`, at
+the same x=24, y=1 position. It shows a placeholder until samples are ready.
+
+This is an estimate of nominal T-states per 20 ms, including HALT/refresh,
+not an instruction counter. WAIT assertions without RD/WR are excluded.
+The CLK synchronization setting matches the calibrated capture described
+above; the other control inputs keep their synchronizers.
+
+Run `python3 tests/test_tstate_counter.py derived/drv_rel` after building
+to execute the assembled counter against generated waveforms, including
+refresh, read/write waits, no-wait transfers and consecutive window reloads.
+`test_zxdisplay.py` also checks the new label, including its last character
+and pixel-buffer guards.
+
+Hardware verification on 2026-10-08: flash verified; the menu averaged about
+70,475 T-states, while VIBRATE's drawing workload produced rolling averages
+around 65,000–68,000. RX/TX DMA remained in endless mode through multiple
+ring wraps with no counter FIFO stalls. The bus-service function remains
+564 bytes. Samples and text-buffer checks are retained in
+`derived/frame_budget_20261008/runtime-counter.json`. The board was restored
+to the 50 Hz menu with VIBRATE buffered, rewound and in fast mode.
+
+The earlier SWD capture tool requires the runtime counter to be absent:
+its existing resource checks reject a running counter safely rather than
+overwriting the counter's state machine, DMA or instruction memory.
+
+Subsequent finite device benchmarks exposed a substantial bias in the LCD
+estimate after shortening the reply path. Use completed-work timings for
+quantitative performance comparisons; see the counter limitation in
+[bus_benchmarks_20261008.md](bus_benchmarks_20261008.md).
+
+## Heavy RAM and I/O device benchmarks
+
+With local OpenOCD running and the matching production ELF already flashed:
+
+```sh
+make test-bus-benchmarks BENCHMARK_OUTPUT=derived/bus_benchmarks/run.json
+python3 tests/compare_bus_benchmarks.py before.json after.json
+```
+
+The runner verifies the ELF matches running code, executes real RZ80 workloads
+with LCD activity, checks their results/FIFO flags, and restores RAM and the
+menu. Each RAM/I/O workload performs over a million operations. It resets
+RZ80 and stops tape playback while retaining the buffered file; stop keyboard
+and tape clients before running it. `--case` selects individual workloads.
+See [bus_benchmarks_20261008.md](bus_benchmarks_20261008.md) for methods,
+limitations and the FIFO/memory optimization comparison.
+
+`--extended` adds byte-verified flash-ROM and RAM sweeps (`rom_read`,
+`rom_ram_read`) and `frame_work`, which records completed work in every
+50 Hz IM1 frame (true T per frame and its jitter). The 300 MHz RP clock
+option (`RP_SYS_CLOCK_KHZ=300000`) and the hot-path changes are assessed in
+[bus_speed_20261008.md](bus_speed_20261008.md).
