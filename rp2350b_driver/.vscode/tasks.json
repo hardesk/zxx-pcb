@@ -8,8 +8,8 @@
             "args": [
                 "build",
                 "BUS_MODE=ASYNC",
-                "BUILD_TYPE=Debug",
-                "BUILD_DIR=derived/drv_dbg",
+                "BUILD_TYPE=Release",
+                "BUILD_DIR=derived/drv_rel",
                 "Z80_CLOCK_HZ=1000000"
             ],
             "options": {
