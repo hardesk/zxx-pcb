@@ -2,7 +2,8 @@
 """Digital model of the asynchronous detector/service/WAIT PIO source.
 
 Checks IRQ consumption, delayed replies, duplicate suppression, data and bus
-turnaround. Does not model FPGA timing, electrical setup/hold or metastability.
+turnaround, and posted memory writes (no WAIT, no reply). Does not model FPGA
+timing, electrical setup/hold or metastability.
 """
 import re
 import unittest
@@ -15,11 +16,12 @@ CLOCK_HALF_TICKS = 48
 
 
 class SM:
-    def __init__(self, source, name, block, status_irq=None, in_base=0):
+    def __init__(self, source, name, block, status_irq=None, in_base=0, jmp_pin=25):
         self.code, self.labels = [], {}
         self.block = block
         self.status_irq = status_irq
         self.in_base = in_base
+        self.jmp_pin = jmp_pin
         section = source.split('.program ' + name, 1)[1].split('.program', 1)[0]
         for line in section.splitlines():
             line = line.split(';')[0].strip()
@@ -29,7 +31,7 @@ class SM:
                 self.labels[line[:-1]] = len(self.code)
             elif line and not line.startswith('.'):
                 self.code.append(line)
-        self.pc = self.delay = self.x = self.isr = self.osr = 0
+        self.pc = self.delay = self.x = self.y = self.isr = self.osr = 0
 
     def step(self, bus):
         if self.delay:
@@ -48,12 +50,17 @@ class SM:
             take = True
             if len(a) == 2:
                 if a[0] == 'pin':
-                    take = bool(bus.pins & (1 << 25))
+                    take = bool(bus.pins & (1 << self.jmp_pin))
                 elif a[0] == '!x':
                     take = self.x == 0
                 elif a[0] == 'x--':
                     take = self.x != 0
                     self.x = (self.x - 1) & MASK
+                elif a[0] == '!y':
+                    take = self.y == 0
+                elif a[0] == 'y--':
+                    take = self.y != 0
+                    self.y = (self.y - 1) & MASK
                 elif a[0] == 'x!=y':
                     take = self.x != self.y
                 else:
@@ -139,8 +146,8 @@ class Bus:
             source = (Path(__file__).resolve().parents[1] / 'z80_bus_async.pio').read_text()
         self.detector = SM(source, 'z80_async_detector', 0)
         self.service = SM(source, 'z80_async_bus', 0)
-        self.wait_sm = SM(source, 'z80_async_guard', 1, status_irq=3, in_base=wait_in_base)
-        self.debug_sm = SM(source, 'z80_async_debug', 1)
+        self.wait_sm = SM(source, 'z80_async_guard', 1, status_irq=3, in_base=wait_in_base,
+                          jmp_pin=RD)
         assert len(self.detector.code) + len(self.service.code) <= 32
         self.tick = 0
         self.pins = 0xfa000000
@@ -155,54 +162,99 @@ class Bus:
                      (clock << CLK) | (self.wait << WAIT))
         self.service.step(self)
         self.wait_sm.step(self)
-        self.debug_sm.step(self)
         self.detector.step(self)
         self.tick += 1
 
 
 class AsyncWaitTest(unittest.TestCase):
-    def test_wait_asserted_on_request_before_write_strobe(self):
+    def test_memory_write_is_posted_without_wait_or_reply(self):
         bus = Bus()
         setup = 0xfa400055 & ~(1 << MREQ)
+        # MREQ alone (write before WR, or refresh) never asserts WAIT.
         for _ in range(100):
             bus.step(setup)
-            if bus.tick >= 8:
-                self.assertEqual(bus.wait, 0)
+            self.assertEqual(bus.wait, 1)
             self.assertFalse(bus.requests)
-        for _ in range(30):
-            bus.step(setup & ~(1 << WR))
-        self.assertEqual(bus.wait, 0)
+        raw = setup & ~(1 << WR)
+        for _ in range(100):
+            bus.step(raw)
+            self.assertEqual(bus.wait, 1)
+            self.assertEqual(bus.oe, 0)
         self.assertEqual(len(bus.requests), 1)
+        mask = MASK & ~((1 << CLK) | (1 << WAIT))
+        self.assertEqual(bus.requests[0] & mask, raw & mask)
+        # No reply was consumed, nothing signalled, service idle at PULL.
+        self.assertFalse(bus.flags)
+        self.assertEqual(bus.service.code[bus.service.pc], 'pull block')
+        # A held write is not published twice; after MREQ rises the next
+        # write is accepted (back-to-back PUSH writes).
+        for _ in range(10):
+            bus.step(0xfa000000)
+        second = 0xfa4001aa & ~((1 << MREQ) | (1 << WR))
+        for _ in range(60):
+            bus.step(second)
+            self.assertEqual(bus.wait, 1)
+        self.assertEqual(len(bus.requests), 2)
+        self.assertEqual(bus.requests[1] & mask, second & mask)
+
+    def test_write_strobe_tail_after_mreq_is_ignored(self):
+        # MREQ may rise a few ns before WR: WR alone is not a request.
+        bus = Bus()
+        raw = 0xfa4000a5 & ~((1 << MREQ) | (1 << WR))
+        for _ in range(40):
+            bus.step(raw)
+        for _ in range(100):
+            bus.step(raw | (1 << MREQ))
+            self.assertEqual(bus.wait, 1)
+        self.assertEqual(len(bus.requests), 1)
+        self.assertFalse(bus.flags)
+
+    def test_posted_writes_then_read_keep_bus_order(self):
+        # PUSH-like: two posted writes, then a fetch that waits for its reply.
+        bus = Bus()
+        writes = [0xfa401011 & ~((1 << MREQ) | (1 << WR)),
+                  0xfa401022 & ~((1 << MREQ) | (1 << WR))]
+        fetch = 0xfa402000 & ~((1 << M1) | (1 << MREQ) | (1 << RD))
+        for raw in writes:
+            for _ in range(30):
+                bus.step(raw)
+            for _ in range(10):
+                bus.step(0xfa000000)
+        for _ in range(40):
+            bus.step(fetch)
+        self.assertEqual(len(bus.requests), 3)
+        self.assertEqual(bus.wait, 0)
+        mask = MASK & ~((1 << CLK) | (1 << WAIT))
+        self.assertEqual([r & mask for r in bus.requests],
+                         [r & mask for r in writes + [fetch]])
+        bus.reply = 0xff3e
+        for _ in range(60):
+            bus.step(fetch)
+            if bus.wait:
+                break
+        self.assertEqual(bus.wait, 1)
+        self.assertEqual(bus.data, 0x3e)
+        for _ in range(40):
+            bus.step(0xfa000000)
+        self.assertEqual(bus.oe, 0)
+        self.assertFalse(bus.flags)
 
     def test_detector_publishes_accepted_snapshot(self):
         bus = Bus()
-        raw = 0xfa4000a5 & ~((1 << MREQ) | (1 << WR))
+        raw = 0xfa4000a5 & ~((1 << MREQ) | (1 << RD))
         for _ in range(50):
             bus.step(raw)
             if bus.detector.pc == bus.detector.labels['request']:
                 break
         else:
-            self.fail('detector did not accept the write')
-        # Change both address and WR after acceptance, before publication.
-        changed = (raw | (1 << WR)) ^ (1 << 8)
+            self.fail('detector did not accept the read')
+        # Change both address and RD after acceptance, before publication.
+        changed = (raw | (1 << RD)) ^ (1 << 8)
         for _ in range(20):
             bus.step(changed)
         mask = MASK & ~((1 << CLK) | (1 << WAIT))
         self.assertEqual(len(bus.requests), 1)
         self.assertEqual(bus.requests[0] & mask, raw & mask)
-
-    def test_debug_marker_irq_window(self):
-        bus = Bus()
-        self.assertEqual(bus.debug, 0)
-        bus.flags.add((1, 6))
-        bus.debug_sm.step(bus)
-        bus.debug_sm.step(bus)
-        self.assertEqual(bus.debug, 1)
-        bus.flags.add((1, 7))
-        bus.debug_sm.step(bus)
-        bus.debug_sm.step(bus)
-        self.assertEqual(bus.debug, 0)
-        self.assertFalse(bus.flags)
 
     def test_late_reply_asserts_wait_without_duplicate_request(self):
         # Let the PIO publish a request but withhold the M33 reply. The WAIT
@@ -244,7 +296,8 @@ class AsyncWaitTest(unittest.TestCase):
     def test_control_truth_table_and_reset(self):
         for bits in range(32):
             m1, io, mem, rd, wr = [bool(bits & (1 << n)) for n in range(5)]
-            expected = ((mem or io) and (rd or wr)) or (io and m1)
+            expected = (((mem or io) and (rd or wr)) or
+                        (io and m1 and not (mem or rd or wr)))
             for reset in (False, True):
                 bus = Bus()
                 pins = 0xfa000000 & ~(bits << 27)
@@ -253,11 +306,13 @@ class AsyncWaitTest(unittest.TestCase):
                 for _ in range(150):
                     bus.step(pins)
                 self.assertEqual(len(bus.requests), int(expected and not reset), (bits, reset))
-                self.assertEqual(bus.wait, int(not (mem or io)))
+                # WAIT only for transfers needing a reply: RD or IORQ.
+                self.assertEqual(bus.wait, int(not (io or rd)), (bits, reset))
 
     def test_transactions_delays_and_turnaround(self):
         cycles = [(MREQ, RD), (MREQ, WR), (MREQ, RD),
                   (IORQ, WR), (IORQ, RD), (IORQ, M1), (MREQ, RD)]
+        sample_mask = ~((1 << CLK) | (1 << WAIT)) & MASK
         for phase in range(2 * CLOCK_HALF_TICKS):
             for latency in (0, 1, 37, 10000):
                 bus = Bus()
@@ -267,54 +322,54 @@ class AsyncWaitTest(unittest.TestCase):
                     raw = 0xfa4000a5
                     for pin in signals:
                         raw &= ~(1 << pin)
+                    posted = signals == (MREQ, WR)
                     start = bus.tick
                     while len(bus.requests) <= index and bus.tick - start < 50:
                         bus.step(raw)
                     self.assertEqual(len(bus.requests), index + 1)
-                    # The detector may publish before the helper's delayed
-                    # acceptance marker rises. IRQ7 ends it after reply setup.
-                    for _ in range(2):
-                        bus.step(raw)
-                    self.assertEqual(bus.debug, 1)
-                    sample_mask = ~((1 << CLK) | (1 << WAIT)) & MASK
                     self.assertEqual(bus.requests[-1] & sample_mask, raw & sample_mask)
                     self.assertLessEqual(bus.tick - start, 40)
-                    for n in range(latency):
-                        # WR may pulse during Tw; request strobe retains ownership.
-                        pins = raw | (1 << WR) if WR in signals and n % 5 == 0 else raw
-                        bus.step(pins)
-                        self.assertEqual(len(bus.requests), index + 1)
-                    value = (phase * 13 + index) & 255
-                    reply_tick = bus.tick
-                    bus.reply = 0 if WR in signals else 0xff00 | value
-                    for _ in range(100):
-                        bus.step(raw)
-                        if (bus.reply is None and bus.wait and
-                                bus.drive_tick >= reply_tick and
-                                bus.tick - bus.drive_tick >= 9 and
-                                (1, 3) not in bus.flags):
-                            break
+                    if posted:
+                        # No WAIT, no reply, no data drive at any latency.
+                        for _ in range(latency % 200 + 5):
+                            bus.step(raw)
+                            self.assertEqual(bus.wait, 1)
+                            self.assertEqual(bus.oe, 0)
+                            self.assertEqual(len(bus.requests), index + 1)
                     else:
-                        self.fail('reply did not settle and release WAIT')
-                    # The IRQ7 marker may still be propagating through the
-                    # helper SM here. Check that it falls before bus release.
-                    self.assertEqual(bus.wait, 1)
-                    self.assertGreaterEqual(bus.tick - bus.drive_tick, 5)
-                    for _ in range(25):
-                        bus.step(raw)
-                        self.assertEqual(len(bus.requests), index + 1)
+                        for n in range(latency):
+                            # WR may pulse during Tw; request strobe retains ownership.
+                            pins = raw | (1 << WR) if WR in signals and n % 5 == 0 else raw
+                            bus.step(pins)
+                            self.assertEqual(len(bus.requests), index + 1)
+                        value = (phase * 13 + index) & 255
+                        reply_tick = bus.tick
+                        bus.reply = 0 if WR in signals else 0xff00 | value
+                        for _ in range(100):
+                            bus.step(raw)
+                            if (bus.reply is None and bus.wait and
+                                    bus.drive_tick >= reply_tick and
+                                    bus.tick - bus.drive_tick >= 9 and
+                                    (1, 3) not in bus.flags):
+                                break
+                        else:
+                            self.fail('reply did not settle and release WAIT')
                         self.assertEqual(bus.wait, 1)
-                        self.assertEqual(bus.oe, 0 if WR in signals else 255)
-                        if WR not in signals:
-                            self.assertEqual(bus.data, value)
+                        self.assertGreaterEqual(bus.tick - bus.drive_tick, 5)
+                        for _ in range(25):
+                            bus.step(raw)
+                            self.assertEqual(len(bus.requests), index + 1)
+                            self.assertEqual(bus.wait, 1)
+                            self.assertEqual(bus.oe, 0 if WR in signals else 255)
+                            if WR not in signals:
+                                self.assertEqual(bus.data, value)
                     # Give the asynchronous end detector time to rearm.
                     for _ in range(48):
                         bus.step(0xfa000000)
                     self.assertEqual(bus.oe, 0)
                     self.assertEqual(bus.wait, 1)
-                    self.assertEqual(bus.debug, 0)
                     self.assertFalse(bus.flags)
-
+                    self.assertIsNone(bus.reply)
 
 if __name__ == '__main__':
     unittest.main()

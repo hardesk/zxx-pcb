@@ -45,24 +45,30 @@ class HighWaitTest(unittest.TestCase):
                 for _ in range(phase):
                     bus.step(0xfa000000)
                 for index, (request, transfer) in enumerate(cycles):
+                    posted = (request, transfer) == (MREQ, WR)
+                    # Memory reads assert MREQ and RD together; a memory
+                    # write's WR follows MREQ; I/O asserts IORQ first.
                     setup = 0xfa4000a5 & ~(1 << request)
+                    if (request, transfer) == (MREQ, RD):
+                        setup &= ~(1 << RD)
                     for _ in range(12):
                         bus.step(setup)
-                    self.assertEqual(bus.wait, 0)
+                    self.assertEqual(bus.wait, int(posted))
                     raw = setup & ~(1 << transfer)
                     for _ in range(40):
                         bus.step(raw)
                     self.assertEqual(len(bus.requests), index + 1)
                     for _ in range(delay):
                         bus.step(raw)
-                        self.assertEqual(bus.wait, 0)
-                    bus.reply = 0 if transfer == WR else 0xff55
-                    for _ in range(100):
-                        bus.step(raw)
-                        if bus.wait:
-                            break
-                    self.assertEqual(bus.wait, 1)
-                    self.assertGreaterEqual(bus.tick - bus.drive_tick, 9)
+                        self.assertEqual(bus.wait, int(posted))
+                    if not posted:
+                        bus.reply = 0 if transfer == WR else 0xff55
+                        for _ in range(100):
+                            bus.step(raw)
+                            if bus.wait:
+                                break
+                        self.assertEqual(bus.wait, 1)
+                        self.assertGreaterEqual(bus.tick - bus.drive_tick, 9)
                     for _ in range(20):
                         bus.step(raw)
                         self.assertEqual(bus.wait, 1)
@@ -83,7 +89,8 @@ class HighWaitTest(unittest.TestCase):
         idle = 0xfa000000
         reset_idle = idle & ~(1 << 25)
         fetch = idle & ~((1 << M1) | (1 << MREQ) | (1 << RD))
-        for request, transfer in ((MREQ, RD), (MREQ, WR), (IORQ, WR), (IORQ, M1)):
+        # (A posted memory write has no outstanding reply to abort.)
+        for request, transfer in ((MREQ, RD), (IORQ, WR), (IORQ, M1)):
             for phase in range(16):
                 for reply_at in (0, 1, 4, 8, 16, 40, 100):
                     with self.subTest(request=request, transfer=transfer,
@@ -134,8 +141,38 @@ class HighWaitTest(unittest.TestCase):
                 bus.step(raw)
             for _ in range(100):
                 bus.step(raw | (1 << MREQ))
-                self.assertEqual(bus.wait, 0)
+                # A read stays held; a posted write never waited.
+                self.assertEqual(bus.wait, int(transfer == WR))
                 self.assertEqual(len(bus.requests), 1)
+
+    def test_posted_write_then_reset_then_fetch(self):
+        idle = 0xfa000000
+        write = idle & ~((1 << MREQ) | (1 << WR))
+        fetch = idle & ~((1 << M1) | (1 << MREQ) | (1 << RD))
+        for phase in range(16):
+            bus = self.bus()
+            for _ in range(phase):
+                bus.step(idle)
+            for _ in range(40):
+                bus.step(write)
+            for _ in range(200):
+                bus.step(idle & ~(1 << 25))
+            for _ in range(20):
+                bus.step(idle)
+            for _ in range(60):
+                bus.step(fetch)
+            self.assertEqual(len(bus.requests), 2)
+            self.assertEqual(bus.wait, 0)
+            bus.reply = 0xff21
+            for _ in range(100):
+                bus.step(fetch)
+                if bus.wait:
+                    break
+            self.assertEqual(bus.wait, 1)
+            self.assertEqual(bus.data, 0x21)
+            for _ in range(50):
+                bus.step(idle)
+            self.assertFalse(bus.flags)
 
 
 if __name__ == '__main__':

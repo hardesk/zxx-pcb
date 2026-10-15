@@ -50,6 +50,9 @@ struct BusRequest {
     bool iorq() const { return !(raw & kRawIorq); }
     bool rd() const { return !(raw & kRawRd); }
     bool wr() const { return !(raw & kRawWr); }
+    // MREQ+WR with M1, IORQ and RD inactive: exactly the snapshot the async
+    // detector posts without a reply (bits 27..31 = M1 IORQ MREQ RD WR).
+    bool posted_write() const { return ((raw >> 27) & 0x1fu) == 0x0bu; }
 
     void dump(uint8_t mem) const {
         printf("busreq %04x %02x m1 %d mreq %d ioreq %d rd %d wr %d mem %02x\n",
@@ -74,6 +77,7 @@ constexpr uint32_t write_reply()
 class ManualBusDriver {
 public:
     static constexpr char const* id = "manual";
+    static constexpr bool posts_memory_writes = false;
 
     void init(uint32_t z80_hz);
     void begin_reset();
@@ -90,6 +94,8 @@ private:
 class AsyncBusDriver {
 public:
     static constexpr char const* id = "async WAIT (detector/service)";
+    // Memory writes are posted: no WAIT, no reply (see z80_bus_async.pio).
+    static constexpr bool posts_memory_writes = true;
 
     void init(uint32_t z80_hz);
     void begin_reset();
@@ -105,10 +111,11 @@ public:
             return {*rx};
         }
         __attribute__((always_inline)) void write_reply(uint32_t reply) const {
-            // Exactly one reply per accepted request. The detector is rearmed
-            // only after the service SM has pulled the previous reply and
-            // retired the bus cycle (IRQ5). Consequently TX cannot be full,
-            // including a transaction-safe reset's final reply.
+            // Exactly one reply per synchronous request; never for a posted
+            // write. The detector rearms for the next synchronous request only
+            // after the service SM has pulled the previous reply and retired
+            // the bus cycle (IRQ5). Consequently TX cannot be full, including
+            // a transaction-safe reset's final reply.
             *tx = reply;
         }
     };
@@ -122,7 +129,6 @@ private:
     PIO clock_pio_ = pio1;
     uint clock_sm_ = 0;
     uint wait_sm_ = 0;
-    uint debug_sm_ = 0;
     uint detector_sm_ = 0;
     uint bus_sm_ = 0;
     uint32_t reset_hold_us_ = 10;
@@ -132,6 +138,7 @@ private:
 class FrozenClockBusDriver {
 public:
     static constexpr char const* id = "frozen clock";
+    static constexpr bool posts_memory_writes = false;
 
     void init(uint32_t z80_hz);
     void begin_reset();

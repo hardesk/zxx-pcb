@@ -24,7 +24,7 @@ CASES = ('fetch', 'ram_read', 'ram_write', 'io_read_fe', 'io_write_fe', 'io_read
 # rom_read sweeps the real (flash-backed) ROM 1 after OUT 7FFD; rom_ram_read
 # runs the identical sweep over RAM bank 0 for a like-for-like XIP comparison.
 # frame_work records completed loop iterations in every 50 Hz IM1 frame.
-EXTRA_CASES = ('rom_read', 'rom_ram_read', 'frame_work')
+EXTRA_CASES = ('rom_read', 'rom_ram_read', 'frame_work', 'push_fill')
 FRAME_HANDLER = 0x8100
 FRAMES = 200
 FRAME_LOOP_TICKS = 23 # INC DE; LD (HL),A; JP loop.
@@ -129,6 +129,11 @@ def program(case, case_id):
     emit(0x3e, case_id, 0x32, 0x00, 0xb0) # Start marker.
     emit(0x3e, 0xa5, 0x0e, outer, 0x06, 0) # A=A5; C=outer; B=256.
     label('body')
+    # push_fill: PUSH HL blit (M1 + two writes per op), as in stack-based
+    # screen fills. SP restarts each pass, so it fills C000..C1FF.
+    body_extra = 0
+    if case == 'push_fill':
+        emit(0x31, 0x00, 0xc2); body_extra = 10 # LD SP,C200.
     op, ticks = {
         'fetch': ((0x00,), 4),
         'ram_read': ((0x7e, 0x2c), 11), # LD A,(HL); INC L (256-byte wrap).
@@ -136,6 +141,7 @@ def program(case, case_id):
         'io_read_fe': ((0xdb, 0xfe), 11),
         'io_write_fe': ((0xd3, 0xfe), 11),
         'io_read_ff': ((0xdb, 0xff), 11),
+        'push_fill': ((0xe5,), 11), # PUSH HL (HL=C000).
     }[case]
     for _ in range(256): emit(*op)
     jump(0x10, 'repeat', True) # DJNZ repeat.
@@ -154,7 +160,8 @@ def program(case, case_id):
         else: code[offset:offset+2] = value.to_bytes(2, 'little')
     # Between identical start/end LD (B000),A write phases, standard Z80 timing:
     # body; DJNZ+JP for inner iterations; outer reload; setup/result/end marker.
-    nominal = outer * 256 * 256 * ticks + outer * 255 * 23 + (outer-1) * 36 + 24 + 7 + 47
+    nominal = (outer * 256 * (256 * ticks + body_extra) + outer * 255 * 23 +
+               (outer-1) * 36 + 24 + 7 + 47)
     return code, nominal, outer * 256 * 256
 
 def write_bytes(probe, address, data):
@@ -168,6 +175,7 @@ def main():
     parser.add_argument('--elf', type=Path, default=ROOT/'derived/drv_rel/rp2350_driver.elf')
     parser.add_argument('--case', choices=CASES+EXTRA_CASES, action='append')
     parser.add_argument('--extended', action='store_true', help='Run the standard cases plus ROM and frame-work cases')
+    parser.add_argument('--z80-hz', type=int, default=5000000, help='Z80 CLK the firmware was built with')
     args = parser.parse_args(); layout = addresses(args.elf); probe = Probe()
     elf_hash = check_firmware(probe, args.elf)
     assert probe.read(0x400a80b0)[0] in (19999, 39999), 'Expected 50 Hz INT (1 or 0.5 us PWM ticks)'
@@ -188,7 +196,7 @@ def main():
     def average():
         next_index = (probe.read(DMA+rx*64+4)[0] & 255) // 4
         values = probe.read(layout['wait_ring'], 64)
-        return (5000000//50) - sum(values[(next_index-i)&63] for i in range(1, 51))/50
+        return (args.z80_hz//50) - sum(values[(next_index-i)&63] for i in range(1, 51))/50
     try:
         reset(False); time.sleep(.02)
         saved = {page: bytes(probe.read(ram[page], 16384, 8)) for page in (0, 2, 3)}
@@ -254,7 +262,8 @@ def main():
                 last_poll = now; time.sleep(.005)
             else: raise TimeoutError('RZ80 benchmark did not finish: ' + case)
             result = probe.read(ram[2]+0x3002, 1, 8)[0]
-            if case in ('ram_read', 'ram_write'): assert result == 0xa5, result
+            if case in ('ram_read', 'ram_write', 'push_fill'): assert result == 0xa5, result
+            if case == 'push_fill': assert probe.read(ram[3], 512, 8) == [0x00, 0xc0]*256
             if case == 'rom_read': assert result == adc_sweep((ROOT/'roms/128-1.rom').read_bytes()), result
             if case == 'rom_ram_read': # OUT 7FFD,10h mapped physical bank 0 at C000.
                 bank0 = probe.read(env + layout['ram_banks_offset'])[0]
@@ -282,7 +291,7 @@ def main():
         reset(True); time.sleep(2); request(8); time.sleep(2)
         probe.sock.close()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(dict(clock_hz=5000000, rp_clock_hz=150000000,
+    args.output.write_text(json.dumps(dict(clock_hz=args.z80_hz, rp_clock_hz=150000000,
         lcd_active=True, ram_restored=True, elf_sha256=elf_hash,
         tape_present=bool(reset_status['blocks']),
         metric_note='Completed-work elapsed time is authoritative; RD/WR-qualified WAIT is approximate and phase-sensitive.',

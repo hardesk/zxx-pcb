@@ -6,7 +6,7 @@ BUILD_TYPE    ?= Release
 BUS_MODE      ?= ASYNC
 # The external CPU clock is independent of the bus service backend.
 # The early-request async guard is qualified at 5 MHz on the attached FPGA.
-Z80_CLOCK_HZ  ?= 5000000
+Z80_CLOCK_HZ  ?= 6000000
 # RP2350 system clock (300 MHz halves bus reply latency; see tests/bus_speed_20261008.md).
 # Above 150 MHz, main() raises VREG and slows flash SCK. Use 150000 for stock speed.
 RP_SYS_CLOCK_KHZ ?= 300000
@@ -124,4 +124,4 @@ test-async-pio:
 	$(PYTHON) tests/test_high_wait_pio.py
 
 test-bus-benchmarks:
-	$(PYTHON) tests/run_bus_benchmarks.py "$(BENCHMARK_OUTPUT)" --elf "$(ELF)"
+	$(PYTHON) tests/run_bus_benchmarks.py "$(BENCHMARK_OUTPUT)" --elf "$(ELF)" --z80-hz $(Z80_CLOCK_HZ)

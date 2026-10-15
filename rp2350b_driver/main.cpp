@@ -686,7 +686,13 @@ static void __no_inline_not_in_flash_func(reset_on_next_request)(Rp2350ZxEnv& zx
     z80pio::ActiveBusDriver& bus, RequestIo& request_io,
     Z80FrameInterrupt& frame_interrupt, uint32_t kZ80ClockHz)
 {
-    const z80pio::BusRequest request = request_io.read_request();
+    z80pio::BusRequest request = request_io.read_request();
+    // A posted write does not hold the CPU in WAIT. Keep servicing them until
+    // a synchronous request parks it, then reset with that one outstanding.
+    while (z80pio::ActiveBusDriver::posts_memory_writes && request.posted_write()) {
+        (void)zx.service_pio_request(request);
+        request = request_io.read_request();
+    }
     frame_interrupt.stop();
     bus.begin_reset();
     request_io.write_reply(zx.service_pio_request(request));
@@ -729,10 +735,20 @@ static void __no_inline_not_in_flash_func(run_z80_bus)(Rp2350ZxEnv& zx,
 
         // Ordinary MREQ+RD (fetch/read) with no tape observer and 128K RAM
         // writes are inline; everything else takes the outlined SRAM path.
-        const auto reply = zx.fast_memory_read(request)
-            ? z80pio::read_reply(zx.read_memory(request.address()))
-            : zx.fast_memory_write(request) ? z80pio::write_reply()
-            : zx.service_pio_request(request);
+        uint32_t reply;
+        if (zx.fast_memory_read(request)) {
+            reply = z80pio::read_reply(zx.read_memory(request.address()));
+        } else if (z80pio::ActiveBusDriver::posts_memory_writes && request.posted_write()) {
+            // Posted memory write: the CPU did not wait and takes no reply.
+            // The shared FIFO keeps bus order. Housekeeping (and a requested
+            // reset) only follows synchronous requests.
+            if (!zx.fast_memory_write(request))
+                (void)zx.service_pio_request(request);
+            continue;
+        } else {
+            reply = zx.fast_memory_write(request) ? z80pio::write_reply()
+                                                  : zx.service_pio_request(request);
+        }
 #ifdef Z80_WAIT_CAPTURE
         if (capture_request < 8)
             capture.start();
