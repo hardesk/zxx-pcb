@@ -17,7 +17,7 @@ import time
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools'))
 from zx_keyboard import packet
-from zx_tape import TapeClient
+from zx_media import MediaClient
 PIO=0x50400000
 DMA=0x50000000
 BUFFERS=(0x20060000,0x20060800,0x20061000)
@@ -50,7 +50,7 @@ class Probe:
 def request(op,payload=b''):
     with socket.create_connection(('localhost',9092),3) as sock:
         sock.settimeout(3)
-        return TapeClient(sock).request(op,payload)
+        return MediaClient(sock).request(op,payload)
 
 def symbol(elf,name):
     output=subprocess.check_output(['arm-none-eabi-nm','-C',str(elf)],text=True)

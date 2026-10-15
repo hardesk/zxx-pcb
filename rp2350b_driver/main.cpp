@@ -19,12 +19,17 @@
 #include "zx_ula.hpp"
 #include "zx_tape.hpp"
 #include "zx_tape_rtt.hpp"
+#include "zx_disk.hpp"
+#include "zx_disk_flash.hpp"
 #include <atomic>
 #include "zx_keyboard_rtt.hpp"
 #include "roms/48.h"
 #include "roms/128-0.h"
 #include "roms/128-1.h"
+#include "roms/128p-0.h"
+#include "roms/trdos.h"
 static_assert(sizeof(spectrum_128_0_rom) == 16384 && sizeof(spectrum_128_1_rom) == 16384);
+static_assert(sizeof(trdos_rom) == 16384);
 static_assert(sizeof(spectrum_48_rom) == 16 * 1024);
 #include "scrs/Rambo.h"
 #include "scrs/GameOver.h"
@@ -46,6 +51,8 @@ void display_core1() {
     ZxDisplay* display;
     while (!(display = core1_display.load(std::memory_order_acquire)))
         tight_loop_contents();
+    // Disk writes program flash: core0 parks this core in SRAM meanwhile.
+    multicore_lockout_victim_init();
     // Read the selected physical screen bank directly (5 or 7).
     // Z80 writes may become visible during conversion; there is no snapshot.
     constexpr uint64_t frame_us = 20000;
@@ -312,6 +319,7 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
     void __no_inline_not_in_flash_func(handle_io_out)(uint16_t addr, uint8_t data) {
         // Independent partial decoders: an even paging alias reaches both.
         if (!(addr & 1)) ula.write(data);
+        if (m_trdos && ZxBetaDisk::decodes(addr)) m_beta->write(addr, data, time_us_32());
         if (m_128k && !(addr & 0x8002) && !(m_paging & 0x20)) {
             m_paging = data & 0x3f;
             select_ram_bank(data & 7);
@@ -342,6 +350,7 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         // Reset mapping/peripherals, not physical RAM. Call with RZ80 held reset.
         m_paging = 0;
         m_rom_mask = 0;
+        m_trdos = false;
         m_ram_pages[0] = m_ram;
         m_ram_pages[1] = m_ram_banks[5];
         m_ram_pages[2] = m_ram_banks[2];
@@ -354,9 +363,14 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         ula.reset();
         keyboard.clear();
         tape.reset();
+        if (m_beta) {
+            m_beta->reset();
+            m_disks->flush();
+        }
     }
 
     uint8_t __no_inline_not_in_flash_func(handle_io_in)(uint16_t port) {
+        if (m_trdos && ZxBetaDisk::decodes(port)) return m_beta->read(port, time_us_32());
         uint8_t fast_byte;
         if (tape.fast_io(port, fast_byte)) return fast_byte;
         if (port & 1) return 0xff;
@@ -374,20 +388,28 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
     bool add_rom(const unsigned char* data, size_t size, unsigned bank) {
         if (!data || size != page_size || bank >= max_roms || m_roms[bank]) return false;
         m_roms[bank] = data;
+        // Timing profile is only valid for the standard ROM tape routine.
+        m_rom_has_loader[bank] = memcmp(data+0x0556, standard_loader_code,
+                                        sizeof(standard_loader_code)) == 0;
         return true;
     }
 
     // Normally page=0; other 16 KiB CPU slots can also be write-protected ROM.
     bool select_rom(unsigned bank, unsigned page = 0) {
         if (bank >= max_roms || page >= 4 || !m_roms[bank]) return false;
+        m_rom_mask |= uint8_t(1u << page);
+        if (page == 0) {
+            m_rom_bank = bank;
+            // TR-DOS overrides page 0 until the CPU leaves it; 7FFD only
+            // chooses the ROM that comes back.
+            if (m_trdos) { update_beta_trap(); return true; }
+        }
         m_rom_pages[page] = m_roms[bank];
         m_read_pages[page] = m_roms[bank];
         if (page == 0) {
-            // Timing profile is only valid for the standard ROM tape routine.
-            m_standard_loader_rom = memcmp(m_roms[bank]+0x0556, standard_loader_code,
-                                          sizeof(standard_loader_code)) == 0;
+            m_standard_loader_rom = m_rom_has_loader[bank];
+            update_beta_trap();
         }
-        m_rom_mask |= uint8_t(1u << page);
         return true;
     }
 
@@ -395,7 +417,11 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
         if (page >= 4) return false;
         m_rom_mask &= uint8_t(~(1u << page));
         m_read_pages[page] = reinterpret_cast<const uint8_t*>(m_ram_pages[page]);
-        if (page == 0) m_standard_loader_rom = false;
+        if (page == 0) {
+            m_standard_loader_rom = false;
+            if (m_trdos) leave_trdos();
+            update_beta_trap();
+        }
         return true;
     }
 
@@ -422,8 +448,10 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
     }
 
     // True for MREQ+RD (fetch or read) while no tape loader observes the CPU.
+    // Also false inside the Beta 128 paging window (see beta_fetch).
     __attribute__((always_inline)) bool fast_memory_read(z80pio::BusRequest request) const {
-        return !(request.raw & (z80pio::kRawMreq | z80pio::kRawRd)) && !tape.observes_cpu();
+        return !(request.raw & (z80pio::kRawMreq | z80pio::kRawRd)) && !tape.observes_cpu() &&
+               uint32_t(uint16_t(request.address() - m_trap_base)) >= m_trap_length;
     }
 
     // MREQ+WR to RAM in 128K mode (no 48K CP/M trap). ROM pages ignore writes.
@@ -443,6 +471,7 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
 
         if (request.mreq()) {
             if (request.rd()) {
+                if (request.m1()) beta_fetch(addr);
                 uint8_t value = read_memory(addr);
                 // Only the ROM loader and its first outgoing fetch need tape work.
                 // Ordinary ROM/RAM reads never run the tape state machine.
@@ -477,6 +506,32 @@ struct Rp2350ZxEnv : public ZxEnv<Rp2350ZxEnv>
     uint8_t __no_inline_not_in_flash_func(service_tape_read)(uint16_t addr, uint8_t value, bool m1) {
         if (m1 && tape.observes_cpu()) tape.observe_fetch(addr,value,m_standard_loader_rom);
         return m_standard_loader_rom ? tape.rom_byte(addr,value) : value;
+    }
+
+    // Beta 128: TR-DOS (in ROM slot rom_bank) replaces the 48 BASIC ROM
+    // (slot basic_bank) at an opcode fetch from 3D00..3DFF, and leaves at
+    // an opcode fetch from RAM (4000h up). Its ports decode only meanwhile.
+    bool enable_beta(ZxBetaDisk& beta, ZxDiskStore& disks, unsigned rom_bank, unsigned basic_bank) {
+        if (rom_bank >= max_roms || !m_roms[rom_bank] || basic_bank >= max_roms) return false;
+        m_beta = &beta; m_disks = &disks;
+        m_trdos_bank = rom_bank; m_basic_bank = basic_bank;
+        beta.reset();
+        update_beta_trap();
+        return true;
+    }
+    bool trdos_active() const { return m_trdos; }
+
+    void __no_inline_not_in_flash_func(beta_fetch)(uint16_t addr) {
+        if (uint32_t(uint16_t(addr - m_trap_base)) >= m_trap_length) return;
+        if (m_trdos) {
+            leave_trdos();
+        } else {
+            m_trdos = true;
+            m_rom_pages[0] = m_roms[m_trdos_bank];
+            m_read_pages[0] = m_roms[m_trdos_bank];
+            m_standard_loader_rom = false;
+        }
+        update_beta_trap();
     }
 
     template<class... Bytes>
@@ -541,11 +596,38 @@ private:
         0xd0, 0x3e, 0x16, 0x3d, 0x20, 0xfd, 0xa7, 0x04, 0xc8, 0x3e, 0x7f, 0xdb, 0xfe, 0x1f, 0xd0, 0xa9,
         0xe6, 0x20, 0x28, 0xf3, 0x79, 0x2f, 0x4f, 0xe6, 0x07, 0xf6, 0x08, 0xd3, 0xfe, 0x37, 0xc9,
     };
+    void leave_trdos() {
+        m_trdos = false;
+        if (m_rom_mask & 1) {
+            const unsigned char* rom = m_roms[m_rom_bank];
+            m_rom_pages[0] = rom;
+            m_read_pages[0] = rom;
+            m_standard_loader_rom = m_rom_has_loader[m_rom_bank];
+        }
+    }
+    void update_beta_trap() {
+        if (m_beta && m_trdos) {
+            m_trap_base = 0x4000; m_trap_length = 0xc000;
+        } else if (m_beta && (m_rom_mask & 1) && m_rom_bank == m_basic_bank) {
+            m_trap_base = 0x3d00; m_trap_length = 0x100;
+        } else {
+            m_trap_base = 0; m_trap_length = 0;
+        }
+    }
+
     bool m_standard_loader_rom = false;
     bool m_128k = false;
+    bool m_trdos = false;
+    unsigned m_rom_bank = 0, m_trdos_bank = 0, m_basic_bank = 0;
+    // fast_memory_read() leaves [m_trap_base, +m_trap_length) to beta_fetch().
+    uint16_t m_trap_base = 0;
+    uint32_t m_trap_length = 0;
+    ZxBetaDisk* m_beta = nullptr;
+    ZxDiskStore* m_disks = nullptr;
     uint8_t m_paging = 0;
     uint8_t m_rom_mask = 0; // Bit n: CPU addresses n*16K..(n+1)*16K-1 are ROM.
     const unsigned char* m_roms[max_roms]{}; // Registered ROM bank images.
+    bool m_rom_has_loader[max_roms]{};
     const unsigned char* m_rom_pages[4]{};  // Selected ROM pointer per CPU page.
     char* m_ram_banks[ram_bank_count]{};
     char* m_ram_pages[4]{};
@@ -668,11 +750,32 @@ private:
 //   0x64, 0x21, 0x00
 // };
 
+// Disk writes stay in the store's one-block cache until the drive has been
+// quiet for a while; the flash write then holds the Z80 for one erase.
+struct DiskFlushTimer {
+    static constexpr uint32_t quiet_ms = 500;
+    uint32_t written = 0, since = 0;
+    void poll(ZxDiskStore& disks, const ZxBetaDisk& beta) {
+        const uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (!disks.dirty() || beta.sectors_written() != written) {
+            written = beta.sectors_written(); since = now;
+        } else if (uint32_t(now - since) >= quiet_ms) {
+            disks.flush();
+        }
+    }
+};
+
+ZxFlashDiskBackend disk_backend;
+ZxDiskStore disk_store(disk_backend);
+ZxBetaDisk beta_disk(disk_store);
+DiskFlushTimer disk_flush_timer;
+
 static __attribute__((noinline)) bool poll_z80_controls(Rp2350ZxEnv& zx,
     ZxKeyboardRtt& keyboard_rtt, ZxTapeRtt& tape_rtt, DebButton& reset_btn)
 {
     keyboard_rtt.poll(zx.keyboard);
-    tape_rtt.poll(zx.tape);
+    tape_rtt.poll(zx.tape, &disk_store);
+    disk_flush_timer.poll(disk_store, beta_disk);
     const bool keyboard_reset = keyboard_rtt.take_reset_request();
     const bool tape_reset = tape_rtt.take_reset_request();
     return reset_btn.check(&z80_reset_button_pressed) || keyboard_reset || tape_reset;
@@ -816,11 +919,22 @@ int main()
     tape_rtt.init();
     init_z80_reset_button();
 
-    // Original 128K editor/menu ROM and companion 48K BASIC ROM.
-    if (!zx.add_rom(spectrum_128_0_rom, sizeof(spectrum_128_0_rom), 0) ||
+    // 128K editor/menu ROM and companion 48K BASIC ROM. The Pentagon editor
+    // (default) adds a TR-DOS menu item; its 48 BASIC ROM is the Spectrum's.
+#if ZX_PENTAGON_ROM
+    const unsigned char* const editor_rom = pentagon_128_0_rom;
+#else
+    const unsigned char* const editor_rom = spectrum_128_0_rom;
+#endif
+    if (!zx.add_rom(editor_rom, sizeof(spectrum_128_0_rom), 0) ||
         !zx.add_rom(spectrum_128_1_rom, sizeof(spectrum_128_1_rom), 1) ||
         !zx.enable_128k())
         panic("Failed to configure 128K ROMs");
+    // Beta 128 / TR-DOS 5.03 in ROM slot 2, entered from 48 BASIC (slot 1),
+    // e.g. RANDOMIZE USR 15616. Mounted images persist in flash.
+    disk_store.load();
+    if (!zx.add_rom(trdos_rom, sizeof(trdos_rom), 2) || !zx.enable_beta(beta_disk, disk_store, 2, 1))
+        panic("Failed to configure TR-DOS");
 
     // CP/M test-program setup (disabled while booting the Spectrum ROM).
     // uint16_t prog_org = 0x8000;
@@ -831,6 +945,10 @@ int main()
     // zx.dump_memory(prog_org, 64, { .width = 16, .ascii = true } );
 
     printf("Hello from RP2350 over RTT!\n");
+    for (unsigned d = 0; d < ZxDiskStore::drives; ++d)
+        if (disk_store.present(d))
+            printf("Disk %c: %s (%lu bytes)\n", 'A' + d, disk_store.info(d).name,
+                   (unsigned long)disk_store.info(d).size);
     char buf[128];
     auto fmt_pad = [&buf](uint32_t pad) {
         #define GB(x, def) ((x & PADS_BANK0_GPIO0_ ## def ## _BITS) >> PADS_BANK0_GPIO0_ ## def ## _LSB)

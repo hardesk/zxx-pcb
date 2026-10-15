@@ -2,7 +2,7 @@
 
 You are running locally on the Mac in `rp2350b_driver`. The WeAct CMSIS-DAP probe
 (RP2350 SWD) and the Tang FPGA running RZ80 are on USB. Use the project's own
-tooling: `make openocd`, `tools/zx_tape.py`, `tools/zx_keyboard.py`, `tests/*.py`,
+tooling: `make openocd`, `tools/zx_media.py`, `tools/zx_keyboard.py`, `tests/*.py`,
 and the docs in `tests/` (`README.md`, `SPECTRUM128.md`, `vibrate_hang_20261008.md`,
 `frame_budget_20261008.md`, `bus_benchmarks_20261008.md`, `bus_latency_20261008.md`).
 
@@ -18,7 +18,7 @@ and the docs in `tests/` (`README.md`, `SPECTRUM128.md`, `vibrate_hang_20261008.
 Symptom: POWER_UP.TAP hangs/crashes "quite at the very start, maybe 4–5 s in".
 1. Ask me (if not already stated) for: tape mode (fast/normal), how I load it
    (128 menu "Tape Loader" vs `LOAD ""` in 48 BASIC), and what the hang looks like.
-2. Reproduce on hardware: upload with `zx_tape.py`, boot it the same way, note the
+2. Reproduce on hardware: upload with `zx_media.py`, boot it the same way, note the
    time and the screen/RTT output when it hangs.
 3. Capture state at the hang without changing production code paths if possible:
    - Is core0 still servicing requests (RTT responsive, keyboard ack)?

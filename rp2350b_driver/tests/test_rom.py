@@ -6,10 +6,12 @@ import re
 import tempfile
 
 root=Path(__file__).resolve().parents[1]
-for bank in (0, 1):
-    header = (root / f'roms/128-{bank}.h').read_text().split('{', 1)[1]
+for name in ('128-0', '128-1', '128p-0', 'trdos'):
+    header = (root / f'roms/{name}.h').read_text().split('{', 1)[1]
     generated = bytes(int(x,16) for x in re.findall(r'0x([0-9a-f]{2})', header))
-    assert generated == (root / f'roms/128-{bank}.rom').read_bytes()
+    assert generated == (root / f'roms/{name}.rom').read_bytes(), name
+# The Pentagon 48 BASIC ROM is the Spectrum 128's, so the build reuses 128-1.h.
+assert (root/'roms/128p-1.rom').read_bytes() == (root/'roms/128-1.rom').read_bytes()
 main=(root/'main.cpp').read_text()
 macros=main[main.index('#define IO_DATA_SHIFT'):main.index('inline uint32_t extract_ctrl')]
 classes=main[main.index('template<class DerivedT>'):main.index('inline static uint32_t gpio_get_all_hi')]
@@ -22,9 +24,11 @@ source=r'''
 #include <array>
 #include <cassert>
 #include <fstream>
+#include <vector>
 #include "zx_keyboard.hpp"
 #include "zx_ula.hpp"
 #include "zx_tape.hpp"
+#include "zx_disk.hpp"
 #include "z80_pins.hpp"
 #include "z80_pio_bus.hpp"
 using std::size_t;
@@ -37,12 +41,19 @@ void gpio_put_all64(uint64_t) {}
 void gpio_set_dir_all_bits64(uint64_t) {}
 void gpio_set_dir_masked(uint32_t,uint32_t) {}
 void gpio_put_masked(uint32_t,uint32_t value) { output=value; }
+uint32_t fake_us=10000; // Outside the disk index pulse.
+uint32_t time_us_32() { return fake_us; }
+struct RamBackend : ZxDiskBackend {
+    std::vector<uint8_t> flash=std::vector<uint8_t>(ZxDiskStore::drives*ZxDiskStore::slot_blocks*block_size,0xff);
+    const uint8_t* block(unsigned d,unsigned i) const override { return flash.data()+(d*ZxDiskStore::slot_blocks+i)*block_size; }
+    bool program(unsigned d,unsigned i,const uint8_t* data) override { memcpy(flash.data()+(d*ZxDiskStore::slot_blocks+i)*block_size,data,block_size); return true; }
+};
 '''+macros+classes+r'''
 z80pio::BusRequest request(uint16_t address, uint8_t value, uint32_t asserted) {
     return {(0xff000000u & ~asserted) | (uint32_t(address)<<8) | value};
 }
 int main(int argc,char** argv) {
-    assert(argc==2);
+    assert(argc==3);
     using namespace z80pio;
     // Exercise the optimized memory-read gate with the real standard ROM.
     std::array<uint8_t,0x4000> standard_rom{};
@@ -231,6 +242,52 @@ int main(int argc,char** argv) {
     machine.reset_machine();
     assert(machine.handle_io_in(0xfdfe)==0xbf && machine.ula.output()==0);
 
+    // Beta 128: TR-DOS (slot 2) replaces 48 BASIC (slot 1) on an M1 fetch
+    // from 3D00..3DFF and leaves on an M1 fetch from RAM; its ports decode
+    // only meanwhile. 7FFD writes while it is in choose the ROM to return to.
+    std::array<uint8_t,0x4000> trdos{};
+    std::ifstream trdosfile(argv[2],std::ios::binary);
+    trdosfile.read(reinterpret_cast<char*>(trdos.data()),trdos.size());
+    assert(trdosfile.gcount()==trdos.size());
+    RamBackend flash; ZxDiskStore disks(flash); disks.load(); ZxBetaDisk beta(disks);
+    Rp2350ZxEnv dos;
+    assert(dos.add_rom(roms[0].data(),0x4000,0) && dos.add_rom(standard_rom.data(),0x4000,1));
+    assert(dos.enable_128k());
+    assert(!dos.enable_beta(beta,disks,3,1));
+    assert(dos.add_rom(trdos.data(),0x4000,2) && dos.enable_beta(beta,disks,2,1));
+    const auto m1=kRawMreq|kRawRd|kRawM1, rd=kRawMreq|kRawRd;
+    // 128 editor ROM selected: no trap.
+    assert(dos.fast_memory_read(request(0x3d00,0,m1)));
+    assert(dos.service_pio_request(request(0x3d00,0,m1))==read_reply(roms[0][0x3d00]) && !dos.trdos_active());
+    assert(dos.handle_io_in(0x1f)==0xff);
+    dos.handle_io_out(0x7ffd,0x10); // 48 BASIC
+    assert(!dos.fast_memory_read(request(0x3d00,0,m1)) && dos.fast_memory_read(request(0x3c00,0,m1)));
+    assert(dos.fast_memory_read(request(0x8000,0,m1)));
+    // Font reads at 3D00.. are not fetches.
+    assert(dos.service_pio_request(request(0x3d08,0,rd))==read_reply(standard_rom[0x3d08]) && !dos.trdos_active());
+    assert(dos.service_pio_request(request(0x3d13,0,m1))==read_reply(trdos[0x3d13]) && dos.trdos_active());
+    assert(dos.peek(0x0000)==trdos[0] && dos.peek(0x3fff)==trdos[0x3fff]);
+    dos.write_memory(0x0010,0x99); assert(dos.peek(0x0010)==trdos[0x10]);
+    // While TR-DOS is in, all RAM reads take the slow path.
+    assert(!dos.fast_memory_read(request(0x8000,0,m1)) && !dos.fast_memory_read(request(0x5cc2,0,rd)));
+    assert(dos.fast_memory_read(request(0x0100,0,m1)));
+    assert((dos.handle_io_in(0x1f)&0x80) && dos.handle_io_in(0xff)==0x3f); // Not ready; no INTRQ/DRQ
+    dos.handle_io_out(0x3f,0x27); assert(dos.handle_io_in(0x3f)==0x27);
+    dos.handle_io_out(0x7ffd,0x00); // Choose the editor ROM for the return.
+    assert(dos.peek(0x0000)==trdos[0] && dos.paging_register()==0);
+    dos.write_memory(0x8000,0x5a);
+    assert(dos.service_pio_request(request(0x8000,0,rd))==read_reply(0x5a) && dos.trdos_active());
+    assert(dos.service_pio_request(request(0x8000,0,m1))==read_reply(0x5a) && !dos.trdos_active());
+    assert(dos.peek(0x0000)==roms[0][0] && dos.handle_io_in(0x3f)==0xff);
+    assert(dos.fast_memory_read(request(0x3d00,0,m1))); // Editor ROM: no trap
+    dos.handle_io_out(0x7ffd,0x10);
+    assert(dos.service_pio_request(request(0x3d00,0,m1))==read_reply(trdos[0x3d00]) && dos.trdos_active());
+    dos.reset_machine();
+    assert(!dos.trdos_active() && dos.peek(0x0000)==roms[0][0] && dos.handle_io_in(0x1f)==0xff);
+    // Unmapping page 0 leaves TR-DOS.
+    dos.handle_io_out(0x7ffd,0x10);
+    assert(dos.service_pio_request(request(0x3d00,0,m1))==read_reply(trdos[0x3d00]) && dos.trdos_active());
+    assert(dos.unmap_rom(0) && !dos.trdos_active() && dos.fast_memory_read(request(0x3d00,0,m1)));
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:
@@ -239,5 +296,5 @@ with tempfile.TemporaryDirectory() as tmp:
     (p/'test.cpp').write_text(source)
     subprocess.run(['c++','-std=c++20','-Wno-format','-fsanitize=address,undefined',
                     '-I',tmp,'-I',str(root),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
-    subprocess.run([str(p/'test'),str(root/'roms/48.rom')],check=True)
-print('PASS: four ROM slots, page masks, bus reads/writes, eight RAM banks, aliases, mapped loading, ULA and 128K paging/aliases/reset')
+    subprocess.run([str(p/'test'),str(root/'roms/48.rom'),str(root/'roms/trdos.rom')],check=True)
+print('PASS: four ROM slots, page masks, bus reads/writes, eight RAM banks, aliases, mapped loading, ULA, 128K paging/aliases/reset and Beta 128 paging/ports')

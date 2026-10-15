@@ -8,7 +8,7 @@ import tempfile
 import zlib
 sys.dont_write_bytecode = True
 root=Path(__file__).resolve().parents[1]
-spec=importlib.util.spec_from_file_location('zx_tape',root/'tools/zx_tape.py')
+spec=importlib.util.spec_from_file_location('zx_media',root/'tools/zx_media.py')
 sender=importlib.util.module_from_spec(spec);spec.loader.exec_module(sender)
 def block(data): return len(data).to_bytes(2,'little')+data
 tap=block(bytes([0,0x80,0x80]))+block(bytes([255,0x42,0xbd]))

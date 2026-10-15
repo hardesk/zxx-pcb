@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 root=Path(__file__).resolve().parents[1]
-spec=importlib.util.spec_from_file_location('zx_tape',root/'tools/zx_tape.py')
+spec=importlib.util.spec_from_file_location('zx_media',root/'tools/zx_media.py')
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 with tempfile.TemporaryDirectory() as folder:
     path=Path(folder)
@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory() as folder:
         if module.readline is not None:
             # A PTY exercises actual Tab and Up-arrow handling, not just the callback.
             master,slave=pty.openpty()
-            code=f"import runpy; m=runpy.run_path({str(root/'tools/zx_tape.py')!r}); m['setup_terminal'](); print('FIRST='+input('first> ')); print('SECOND='+input('second> '))"
+            code=f"import runpy; m=runpy.run_path({str(root/'tools/zx_media.py')!r}); m['setup_terminal'](); print('FIRST='+input('first> ')); print('SECOND='+input('second> '))"
             child=subprocess.Popen([sys.executable,'-c',code],stdin=slave,stdout=slave,stderr=slave,cwd=path)
             os.close(slave);output=bytearray()
             def until(marker):

@@ -24,6 +24,8 @@ RTT_PORT      ?= 9090
 KEYBOARD_PORT ?= 9091
 TAPE_PORT     ?= 9092
 TAP_FILE      ?=
+DISK_FILE     ?=
+DRIVE         ?= A
 BENCHMARK_OUTPUT ?= derived/bus_benchmarks/latest.json
 
 ELF           := $(BUILD_DIR)/$(PROJECT).elf
@@ -45,7 +47,7 @@ CMAKE_CONFIG_ARGS += -DPICO_SDK_PATH=$(PICO_SDK_PATH)
 endif
 
 .PHONY: help configure build artifacts elf bin hex flash flash-bin \
-	openocd monitor rtt keyboard tape rtt1 rtt2 test-async-pio test-bus-benchmarks
+	openocd monitor rtt keyboard tape media disk rtt1 rtt2 test-async-pio test-disk test-bus-benchmarks
 
 help:
 	@printf '%s\n' \
@@ -56,9 +58,11 @@ help:
 		'make monitor               Connect to the OpenOCD command monitor' \
 		'make rtt                   Connect to RTT channel 0' \
 		'make keyboard              Held-key keyboard window on RTT channel 1 (alias: rtt1)' \
-		'make tape                  Interactive tape prompt on RTT channel 2 (alias: rtt2)' \
+		'make media                 Tape + disk prompt on RTT channel 2 (aliases: tape, rtt2)' \
 		'make tape TAP_FILE=game.tap Upload and arm a TAP file' \
+		'make disk DISK_FILE=x.trd  Mount a TRD/SCL image (DRIVE=A..D, default A)' \
 		'make test-async-pio        Test the active asynchronous WAIT driver' \
+		'make test-disk             TR-DOS disk store, WD1793 and real-ROM boot/SAVE tests' \
 		'make test-bus-benchmarks   RAM/IO workloads on matching flashed firmware; requires local OpenOCD' \
 		'' \
 		'Useful overrides:' \
@@ -116,8 +120,15 @@ rtt:
 keyboard rtt1:
 	$(PYTHON) tools/zx_keyboard.py --host "$(OPENOCD_HOST)" --port "$(KEYBOARD_PORT)"
 
-tape rtt2:
-	$(PYTHON) tools/zx_tape.py --host "$(OPENOCD_HOST)" --port "$(TAPE_PORT)" $(if $(strip $(TAP_FILE)),tape "$(TAP_FILE)")
+media tape rtt2:
+	$(PYTHON) tools/zx_media.py --host "$(OPENOCD_HOST)" --port "$(TAPE_PORT)" $(if $(strip $(TAP_FILE)),tape "$(TAP_FILE)")
+
+disk:
+	$(if $(strip $(DISK_FILE)),,$(error Set DISK_FILE=image.trd|scl))
+	$(PYTHON) tools/zx_media.py --host "$(OPENOCD_HOST)" --port "$(TAPE_PORT)" disk "$(DISK_FILE)" $(DRIVE)
+
+test-disk:
+	$(PYTHON) tests/test_disk.py
 
 test-async-pio:
 	$(PYTHON) tests/test_wait_manual_pio.py

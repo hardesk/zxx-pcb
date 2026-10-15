@@ -1,8 +1,11 @@
-# Buffered TAP over RTT
+# Tape and TR-DOS disks over RTT
 
-`zx_tape.py` uses only the Python standard library. Channel 2 on TCP port 9092
-uploads a whole TAP file into RP RAM, then arms it for the Spectrum ROM loader.
-The host connection can close after the upload; the RP generates EAR locally.
+`zx_media.py` (formerly `zx_tape.py`) uses only the Python
+standard library. Over channel 2 on TCP port 9092 it uploads a whole TAP file
+into RP RAM and arms it for the Spectrum ROM loader, and mounts TRD/SCL disk
+images in TR-DOS drives A..D (see [TR-DOS disks](#tr-dos-disks)). The host
+connection can close after an upload; the RP plays the tape and serves the
+disks locally.
 
 Start the normal OpenOCD/RTT setup with `make openocd`, which now exposes all
 three channels. If using an already-running VS Code OpenOCD session with the
@@ -15,30 +18,30 @@ monitor rtt server start 9092 2
 ## Commands
 
 ```sh
-python3 tools/zx_tape.py
+python3 tools/zx_media.py        # or: make media (aliases: make tape, make rtt2)
 ```
 
 ```text
-tape> tape /path/to/game.tap
-tape> mode fast
-tape> status
-tape> stop
-tape> rewind
-tape> quit
+zx> tape /path/to/game.tap
+zx> mode fast
+zx> disk /path/to/demo.trd       # drive A
+zx> disk /path/to/game.scl B ro  # drive B, read-only
+zx> status
+zx> quit
 ```
 
 Up/Down arrows recall command history on macOS/Linux through Python readline.
 History is kept for the current tool session. Tab completes commands and filenames
-after `tape `, including directories, `~/` paths and filenames containing spaces.
+after `tape ` and `disk `, including directories, `~/` paths and filenames containing spaces.
 
 Quote paths containing spaces. Windows paths also work as one-shot arguments;
 forward-slash paths work in the interactive prompt on every platform.
 
 ```sh
-python3 tools/zx_tape.py tape "my game.tap"
-python3 tools/zx_tape.py status
-python3 tools/zx_tape.py stop
-python3 tools/zx_tape.py rewind
+python3 tools/zx_media.py tape "my game.tap"
+python3 tools/zx_media.py disk demo.trd
+python3 tools/zx_media.py status
+make disk DISK_FILE=demo.scl DRIVE=B
 ```
 
 Use `--host`/`--port` for another RTT endpoint. One tool owns channel 2 at a time.
@@ -79,6 +82,50 @@ Upload the TAP, then issue `LOAD ""` on the Spectrum. Uploading while the ROM is
 already waiting also works: committing the file starts a fresh pilot signal on
 its next loader instruction. After pressing the RZ80 reset button (GPIO38), the file is retained but
 stopped; use `rewind` to arm it again. Resetting/power-cycling the RP discards it.
+
+## TR-DOS disks
+
+The firmware emulates a Beta 128 interface with TR-DOS 5.03 (`roms/trdos.rom`).
+The default editor ROM is the Pentagon 128 one (`roms/128p-0.rom`): its menu has
+a **TR-DOS** item in place of Tape Tester. From BASIC, `RANDOMIZE USR 15616`
+enters TR-DOS as usual (from 48 BASIC, note the menu's 48 BASIC locks 128K
+paging, so 128K software should be started from the TR-DOS item or 128 BASIC).
+In TR-DOS, `RUN` boots the disk's `boot` file and `LIST` shows the catalog.
+Build with `-DZX_PENTAGON_ROM=OFF` for the original Spectrum 128 menu.
+
+- `disk <file> [A|B|C|D] [ro]` mounts a `.trd` or `.scl` image, in drive A unless
+  a drive is given. SCL is converted to TRD on the host (files laid out from
+  track 1, catalog and disk info sector written as TR-DOS would). The empty tail
+  of the image is not sent: the RP reads unwritten sectors as zeros. `ro`
+  write-protects the drive.
+- `eject [A|B|C|D]` empties a drive (A by default); `disks` lists them; `status`
+  shows the tape and the disks.
+- `blank [A|B|C|D] [label]` mounts a freshly formatted 80-track double-sided disk.
+
+Images live in the last 4 MiB of the RP's flash, one 1 MiB slot per drive, so
+mounts survive an RP reset and reflashing the firmware. Mounting erases and
+programs only the 4 KiB flash blocks that differ, holding the Z80 for each
+(~50 ms). A full 640 KiB disk uploads in about 18 s, limited by the CMSIS-DAP
+probe's RTT bandwidth (~35 KiB/s); remounting the same image costs the transfer
+only.
+
+TR-DOS writes (SAVE, FORMAT, MOVE) go to a one-block RAM cache and reach flash
+after the drive has been idle for 0.5 s, on a mount change, or at an RZ80
+reset; `disks` reports pending writes. Each flash write holds the Z80 for one
+block erase. Power loss within that half second loses the last writes.
+
+The WD1793 completes commands at once: DRQ is ready when TR-DOS polls, and disk
+rotation appears only as 300 rpm index pulses (TR-DOS uses them to detect a
+disk) and as the Write Track timeout. Read/Write Sector (single and multiple),
+Read Address, Restore/Seek/Step with verify, Write Track (format) and Force
+Interrupt are emulated; Read Track ends immediately with no data. Copy
+protection that depends on real track layout or timing will not work.
+
+TR-DOS 5.03 quirk: the first time a drive is used, its drive detection writes
+50h into a variable that SAVE has already set, so the first `SAVE ... CODE` to
+a fresh drive records its start address 80 too high (the data itself is
+right). Touch the drive first, e.g. `CAT "b:"`. The host emulator test
+reproduces this with the stock ROM.
 
 ## Playback and scope
 
@@ -121,7 +168,8 @@ Then issue `LOAD ""` on the Spectrum. `mode normal` restores pulse playback.
 ## Wire protocol
 
 Every frame: `ZT`, version byte 1, opcode byte, sequence u32 LE, payload length
-u16 LE, payload, CRC32 of header+payload (u32 LE). Payload limit is 516 bytes.
+u16 LE, payload, CRC32 of header+payload (u32 LE). Payload limit is 2052 bytes
+(tape chunks use 516).
 Responses use opcode OR 80h, the same sequence, and a JSON payload containing
 `ok` and status. A rejected command has `ok:false`. The receiver caches the last
 response so retransmitting a request does not repeat commit/rewind actions.
@@ -138,6 +186,15 @@ keeps one request outstanding and retries timeouts up to three attempts.
 | 6 STATUS | empty |
 | 7 MODE | u8: 0 normal, 1 fast |
 | 8 RESET | empty; acknowledges a queued RZ80 reset |
+| 10h DISK BEGIN | drive u8, flags u8 (bit 0 read-only), size u32, CRC32 u32, name (≤24 bytes) |
+| 11h DISK CHUNK | byte offset u32, 1..2048 bytes; short reply |
+| 12h DISK COMMIT | empty; mounts after size/CRC check |
+| 13h DISK EJECT | drive u8 |
+| 14h DISK STATUS | empty |
+
+Disk replies list all four drives. The host keeps up to three disk chunks in
+flight (the RP's RTT down buffer is 8 KiB); replies arrive in order, and a lost
+one aborts the upload instead of retrying.
 
 The RP rejects invalid sizes, noncontiguous chunks, incomplete or corrupt
 uploads, and malformed block lengths. A file is never played while uploading.
@@ -149,6 +206,12 @@ consecutive blocks.
 
 Run `python3 tests/test_tape.py` for transfer, pulse, instruction-clock,
 resynchronization and control regressions with sanitizers.
+
+Run `python3 tests/test_disk.py` (`make test-disk`) for the disk store and
+WD1793, and an end-to-end run of the real 48 and TR-DOS ROMs on z80emu
+(`Z80EMU`, default `~/Projects/speccy/z80emu`): `RANDOMIZE USR 15616`, `RUN`
+of a `boot` from a converted SCL, and a SAVE checked in the catalog.
+`tests/test_rom.py` covers the Beta 128 paging in the production environment.
 
 References: [standard tape pulse specification](https://www.worldofspectrum.net/TZXformat.html)
 and [ROM loader disassembly](https://www.skoolkit.ca/disassemblies/rom/hex/asm/0556.html).
